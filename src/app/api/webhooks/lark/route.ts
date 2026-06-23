@@ -339,7 +339,7 @@ CRITICAL RULES:
         const toolDefs = await getToolDefinitions();
         const nativeTools = toolDefs.map(t => ({ type: 'function', function: { name: t.function.name, description: t.function.description, parameters: t.function.parameters } }));
         const response = await chatCompletion(chatMessages, { tools: nativeTools });
-        log.info({ round, responseLen: response.content.length, preview: response.content.slice(0, 300), hasNativeToolCalls: !!response.toolCalls?.length }, 'LLM response for tool parsing');
+        log.info({ round, responseLen: response.content.length, preview: response.content.slice(0, 300) }, 'LLM response for tool parsing');
 
         // Check native tool_calls from API first (OpenAI format)
         let toolCalls: { name: string; args: Record<string, unknown> }[] = [];
