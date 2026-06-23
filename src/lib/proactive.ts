@@ -181,7 +181,14 @@ export async function detectSmartContext(message: string, appId: string, chatId:
         const r = await executeTool('lark_sheets_info', { spreadsheetToken: token }, { appId, chatId });
         if (r.success) return `📊 Spreadsheet detected:\n\n${r.output}`;
       } else if (type === 'base') {
-        return `📊 Base/Bitable link detected: ${token}\n\nThis is a Lark Base (Bitable). To read data, please open the link in Lark and share specific table/sheet.`;
+        // Extract appToken from URL, try to list tables and read first one
+        const appToken = token;
+        const info = await executeTool('lark_bitable_tables', { appToken }, { appId, chatId });
+        if (info.success) {
+          return `📊 Base/Bitable detected: ${appToken}\n\n${info.output.slice(0, 3000)}${info.output.length > 3000 ? '\n[...truncated]' : ''}\n\n💡 Ask me things like "total amount paid" or "count rows" to analyze this data!`;
+        }
+        // Fallback: try common table ID patterns
+        return `📊 Base/Bitable detected: ${appToken}\n\nI can see this is a Bitable but couldn't read the table list. Please tell me the table ID (e.g. "table1" or "tblXXX") and I'll read it!`;
       } else {
         const r = await executeTool('lark_docs_read', { documentId: token }, { appId, chatId });
         if (r.success) return `📄 Document detected:\n\n${r.output.slice(0, 2000)}${r.output.length > 2000 ? '\n[...truncated]' : ''}`;

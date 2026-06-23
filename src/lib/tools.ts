@@ -243,6 +243,9 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case 'plugin_info':
         result = await pluginInfo(args.pluginId as string);
         break;
+      case 'lark_bitable_tables':
+        result = await larkBitableTables(args.appToken as string, context?.appId);
+        break;
       case 'lark_bitable_list':
         result = await larkBitableList(args.appToken as string, args.tableId as string, args.filter as string | undefined);
         break;
@@ -737,6 +740,29 @@ async function analyticsQuery(): Promise<string> {
 }
 
 // === Lark Full API Tools ===
+
+async function larkBitableTables(appToken: string, appId?: string): Promise<string> {
+  try {
+    const { larkBitableListTables, larkBitableListFields } = await import('@/lib/lark-api');
+    const data = await larkBitableListTables(appToken) as { items?: Record<string, unknown>[] };
+    const tables = data.items || [];
+    if (tables.length === 0) return 'No tables found in this Bitable.';
+    let output = `Found ${tables.length} table(s):\n\n`;
+    for (const tbl of tables) {
+      const tid = tbl.table_id as string;
+      const name = tbl.name as string || tid;
+      output += `📋 ${name} (tableId: ${tid})\n`;
+      try {
+        const fieldsData = await larkBitableListFields(appToken, tid) as { items?: Record<string, unknown>[] };
+        const fields = fieldsData.items || [];
+        if (fields.length > 0) {
+          output += `   Fields: ${fields.map(f => `${f.field_name}(${f.type})`).join(', ')}\n`;
+        }
+      } catch { /* skip fields */ }
+    }
+    return output;
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
 
 async function larkBitableList(appToken: string, tableId: string, filter?: string): Promise<string> {
   try {

@@ -322,6 +322,7 @@ CRITICAL RULES:
 - For Drive: use lark_drive_search to find files, lark_drive_upload/download, lark_drive_create_folder.
 - For Video Conferences: use lark_vc_search to find meetings, lark_vc_notes for meeting notes.
 - For Group Management: use lark_group_list, lark_group_create, lark_group_members.
+- For Lark Base (Bitable): use lark_bitable_tables to list tables, lark_bitable_list to read records. When sharing a Base link, auto-discover tables and offer to read data. When user asks about data ("total amount paid", "count rows", etc.), use lark_bitable_list to fetch records then calculate.
 - NEVER say "create it manually" or "do it yourself". USE YOUR TOOLS.
 - For proactive: morning briefing runs automatically at 8am WIB. Meeting reminders push 15min before. Smart context auto-detects doc links, person searches, and quick tasks.`;
 
