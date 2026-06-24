@@ -1,7 +1,7 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { ok, err, parseBody } from '@/lib/api';
 import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile } from '@/lib/lark';
-import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, type LarkCard } from '@/lib/lark-cards';
+import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, searchResultCard, type LarkCard } from '@/lib/lark-cards';
 import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } from '@/lib/proactive';
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';

@@ -480,6 +480,44 @@ export function approvalListCard(
   });
 }
 
+/**
+ * Search result card — displays search results from KB, web, or Lark docs.
+ */
+export function searchResultCard(
+  query: string,
+  results: Array<{
+    title: string;
+    snippet: string;
+    url?: string;
+    source?: string;
+    score?: number;
+  }>,
+  options?: { totalResults?: number; searchTime?: string }
+): LarkCard {
+  const elements: CardElement[] = [];
+
+  if (results.length === 0) {
+    elements.push(md(`No results found for **${query}**.`));
+  } else {
+    elements.push(md(`Found **${options?.totalResults || results.length}** results${options?.searchTime ? ` in ${options.searchTime}` : ''}`));
+    elements.push(divider());
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      let line = `**${i + 1}. ${r.title}**`;
+      if (r.source) line += ` \[${r.source}\]`;
+      line += `\n${r.snippet}`;
+      if (r.url) line += `\n[🔗 Read more](${r.url})`;
+      elements.push(md(line));
+      if (i < results.length - 1) elements.push(divider());
+    }
+  }
+
+  return buildCard(elements, {
+    header: header(`🔍 Search: ${query}`, { color: 'turquoise' }),
+    config: { width_mode: 'default' },
+  });
+}
+
 // ─── Card Action Value Helpers ───────────────────────────────────────────────
 
 /** Create a standardized action value for card button callbacks */
