@@ -7,6 +7,7 @@ import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
 import { getToolDefinitions, executeTool } from '@/lib/tools';
 import { autoLearn } from '@/lib/learning';
+import { withLLMRetry, withToolRetry } from '@/lib/resilient';
 
 const log = childLogger('webhook:lark');
 
@@ -378,7 +379,7 @@ CRITICAL RULES:
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const toolDefs = await getToolDefinitions();
         const nativeTools = toolDefs.map(t => ({ type: 'function', function: { name: t.function.name, description: t.function.description, parameters: t.function.parameters } }));
-        const response = await chatCompletion(chatMessages, { tools: nativeTools });
+        const response = await withLLMRetry(() => chatCompletion(chatMessages, { tools: nativeTools }));
         log.info({ round, responseLen: response.content.length, preview: response.content.slice(0, 300) }, 'LLM response for tool parsing');
 
         // Check native tool_calls from API first (OpenAI format)
@@ -414,7 +415,7 @@ CRITICAL RULES:
           break;
         }
 
-        const result = await executeTool(toolCall.name, toolCall.args, { appId: app_id, chatId: chatId });
+        const result = await withToolRetry(() => executeTool(toolCall.name, toolCall.args, { appId: app_id, chatId: chatId }), toolCall.name);
         log.info({ tool: toolCall.name, success: result.success, output: result.output.slice(0, 200) }, 'Lark tool result');
 
         // If calendar tool returned no events, append OAuth link for user authorization
@@ -433,7 +434,7 @@ CRITICAL RULES:
         log.info({ toolsUsed }, 'Max tool rounds reached, forcing final answer');
         chatMessages.push({ role: 'user', content: `Based on the tool results above, give a clear final answer to the user now.` });
         try {
-          const finalAnswer = await chatCompletion(chatMessages);
+          const finalAnswer = await withLLMRetry(() => chatCompletion(chatMessages));
           finalResponse = finalAnswer.content;
         } catch (e) {
           log.error({ err: e }, 'Final answer LLM call failed');
