@@ -391,6 +391,9 @@ export async function executeProactiveRule(rule: ProactiveRule): Promise<void> {
       case 'deadline_tracker':
         output = await runDeadlineTracker(rule.user_id, appId, chatId);
         break;
+      case 'memory_digest':
+        output = await runDailyMemoryDigest(rule.user_id, appId, chatId);
+        break;
     }
 
     if (run) await query('UPDATE proactive_runs SET status=$1, output=$2, completed_at=now() WHERE id=$3', ['completed', output, run.id]);
@@ -424,6 +427,13 @@ export async function setupDefaultProactiveRules(userId: string): Promise<void> 
     `INSERT INTO proactive_rules (user_id, name, type, trigger_config, action_type, action_config, next_run_at)
      VALUES ($1, 'Meeting Reminder', 'cron', '{"cron": "*/10 * * * *"}', 'meeting_reminder', '{}', $2)`,
     [userId, calculateNextRun({ cron: '*/10 * * * *' })]
+  );
+  // GOR-131: Daily memory digest at 9pm WIB (14:00 UTC)
+  await query(
+    `INSERT INTO proactive_rules (user_id, name, type, trigger_config, action_type, action_config, next_run_at)
+     VALUES ($1, 'Daily Memory Digest', 'cron', '{"cron": "0 14 * * *"}', 'memory_digest', '{}', $2)
+     ON CONFLICT DO NOTHING`,
+    [userId, calculateNextRun({ cron: '0 14 * * *' })]
   );
   log.info({ userId }, 'Default proactive rules created');
 }
@@ -539,4 +549,63 @@ function detectReminderIntent(text: string): ReminderIntent | null {
   }
 
   return { title, dueDate, originalText: text };
+}
+
+// === Daily Memory Digest (GOR-131) ===
+
+export async function runDailyMemoryDigest(userId: string, appId: string, chatId: string): Promise<string> {
+  log.info({ userId }, 'Running daily memory digest');
+
+  const stats = await getOne<{
+    total_notes: number;
+    notes_today: number;
+    total_entities: number;
+    total_links: number;
+  }>(
+    `SELECT
+      (SELECT count(*) FROM knowledge_notes WHERE user_id = $1) as total_notes,
+      (SELECT count(*) FROM knowledge_notes WHERE user_id = $1 AND created_at >= now() - interval '1 day') as notes_today,
+      (SELECT count(*) FROM knowledge_entities WHERE user_id = $1) as total_entities,
+      (SELECT count(*) FROM knowledge_links) as total_links`,
+    [userId]
+  );
+
+  const recentNotes = await getMany<{ title: string; tags: string[]; created_at: string }>(
+    'SELECT title, tags, created_at FROM knowledge_notes WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5',
+    [userId]
+  );
+
+  const recentEntities = await getMany<{ name: string; entity_type: string }>(
+    'SELECT name, entity_type FROM knowledge_entities WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 5',
+    [userId]
+  );
+
+  const parts: string[] = [];
+  parts.push('🧠 **Daily Memory Digest**\n');
+  parts.push(`📝 Notes: ${stats?.total_notes || 0} total, ${stats?.notes_today || 0} today`);
+  parts.push(`🏷️ Entities: ${stats?.total_entities || 0}`);
+  parts.push(`🔗 Links: ${stats?.total_links || 0}\n`);
+
+  if (recentNotes.length > 0) {
+    parts.push('📋 **Recent Memories:**');
+    for (const n of recentNotes) {
+      const tags = Array.isArray(n.tags) ? n.tags.join(', ') : '';
+      parts.push(`• ${n.title} [${tags}]`);
+    }
+  }
+
+  if (recentEntities.length > 0) {
+    parts.push('\n🏷️ **Known Entities:**');
+    for (const e of recentEntities) parts.push(`• ${e.name} (${e.entity_type})`);
+  }
+
+  const digest = parts.join('\n');
+
+  await sendLarkMessage(appId, '', chatId, 'interactive', JSON.stringify({
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🧠 Daily Memory Digest' }, template: 'turquoise' },
+    elements: [{ tag: 'markdown', content: digest }],
+  }), 'chat_id');
+
+  return digest;
 }
