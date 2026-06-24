@@ -6,7 +6,7 @@ import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } fro
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
 import { getToolDefinitions, executeTool } from '@/lib/tools';
-import { autoLearn } from '@/lib/learning';
+import { autoLearn, getUserPersona } from '@/lib/learning';
 import { withLLMRetry, withToolRetry } from '@/lib/resilient';
 
 const log = childLogger('webhook:lark');
@@ -321,7 +321,13 @@ export async function POST(request: Request) {
       const tools = await getToolDefinitions();
       const toolList = tools.map(t => `- ${t.function.name}(${Object.keys(t.function.parameters.properties || {}).join(', ')}): ${t.function.description}`).join('\n');
 
-      const systemPrompt = `You are Agentic OS, responding to messages from Lark. Be concise and helpful.
+      // GOR-130: Inject user persona from learned memory
+      const userPersona = await getUserPersona(config.user_id);
+
+      const systemPrompt = `You are Agentic OS, responding to messages from Lark. Be concise and helpful.${userPersona ? `
+
+USER CONTEXT (use this to personalize your responses):
+${userPersona}` : ''}
 
 You have access to the following tools:
 ${toolList}

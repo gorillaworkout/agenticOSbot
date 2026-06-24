@@ -361,6 +361,48 @@ function extractEntities(message: string): { name: string; type: string; descrip
   return entities;
 }
 
+/**
+ * Build a user persona string from learned notes + entities.
+ * Injected into system prompt so LLM knows user context (GOR-130).
+ */
+export async function getUserPersona(userId: string): Promise<string> {
+  try {
+    const notes = await searchVaultNotes(userId, '', ['personal', 'preference', 'instruction', 'job', 'relationship', 'context']);
+    const entities = await getMany<{ name: string; entity_type: string; description: string }>(
+      'SELECT name, entity_type, description FROM knowledge_entities WHERE user_id = $1 ORDER BY frequency DESC LIMIT 20',
+      [userId]
+    );
+
+    if ((!notes || notes.length === 0) && (!entities || entities.length === 0)) return '';
+
+    const parts: string[] = [];
+
+    // User preferences & instructions
+    const prefs = notes.filter(n => (n.tags as string[])?.includes('preference') || (n.tags as string[])?.includes('instruction'));
+    if (prefs.length > 0) {
+      parts.push('User preferences/instructions:');
+      for (const p of prefs.slice(0, 10)) parts.push(`- ${p.title}: ${p.content}`);
+    }
+
+    // Personal info
+    const personal = notes.filter(n => (n.tags as string[])?.includes('personal') || (n.tags as string[])?.includes('job'));
+    if (personal.length > 0) {
+      parts.push('User context:');
+      for (const p of personal.slice(0, 10)) parts.push(`- ${p.content}`);
+    }
+
+    // Known entities (people, orgs, projects)
+    if (entities.length > 0) {
+      parts.push('Known entities:');
+      for (const e of entities.slice(0, 10)) parts.push(`- ${e.name} (${e.entity_type}): ${e.description || ''}`);
+    }
+
+    return parts.join('\n');
+  } catch {
+    return '';
+  }
+}
+
 // === Graph Stats ===
 
 export async function getGraphStats(userId: string): Promise<Record<string, unknown>> {
