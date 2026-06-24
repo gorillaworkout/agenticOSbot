@@ -471,7 +471,22 @@ CRITICAL RULES:
       }
 
       // Fallback if LLM returns empty content
-      const replyText = finalResponse?.trim() || 'Maaf, saya tidak bisa menghasilkan respons saat ini. Coba lagi sebentar ya 🙏';
+      let replyText = finalResponse?.trim() || 'Maaf, saya tidak bisa menghasilkan respons saat ini. Coba lagi sebentar ya 🙏';
+
+      // GOR-129: Self-reflection — check if answer is complete and accurate
+      if (toolsUsed.length > 0 && replyText.length > 50) {
+        try {
+          const reflection = await withLLMRetry(() => chatCompletion([
+            { role: 'system', content: 'You are a quality checker. Evaluate if the assistant response fully answers the user request. If something is missing or could be better, return a SHORT improved version. If the response is good, return the EXACT same text. Return ONLY the final text, no explanation.' },
+            { role: 'user', content: `User request: ${textContent.slice(0, 500)}\n\nAssistant response: ${replyText.slice(0, 2000)}` },
+          ], { temperature: 0.1, maxTokens: 1000 }));
+          if (reflection.content && reflection.content.length > replyText.length * 0.5) {
+            replyText = reflection.content.trim();
+          }
+        } catch {
+          // Reflection failure is non-fatal, use original response
+        }
+      }
 
       log.info({ chatId, toolsUsed, replyLen: replyText.length }, 'Lark reply generated');
 
