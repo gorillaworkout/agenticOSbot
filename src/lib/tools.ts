@@ -419,6 +419,42 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case 'github_create_file':
         result = await githubCreateFile(context?.userId, args.owner as string, args.repo as string, args.path as string, args.content as string, args.message as string, args.branch as string | undefined);
         break;
+      // GOR-140: Notion tools
+      case 'notion_search':
+        result = await notionSearch(context?.userId, args.query as string | undefined);
+        break;
+      case 'notion_get_page':
+        result = await notionGetPage(context?.userId, args.pageId as string);
+        break;
+      case 'notion_create_page':
+        result = await notionCreatePage(context?.userId, args.databaseId as string, args.properties as Record<string, unknown>);
+        break;
+      case 'notion_list_databases':
+        result = await notionListDatabases(context?.userId);
+        break;
+      case 'notion_query_database':
+        result = await notionQueryDatabase(context?.userId, args.databaseId as string, args.filter);
+        break;
+      // GOR-140: Slack tools
+      case 'slack_list_channels':
+        result = await slackListChannels(context?.userId);
+        break;
+      case 'slack_send_message':
+        result = await slackSendMessageTool(context?.userId, args.channel as string, args.text as string);
+        break;
+      case 'slack_search_messages':
+        result = await slackSearchMessages(context?.userId, args.query as string);
+        break;
+      // GOR-140: Airtable tools
+      case 'airtable_list_bases':
+        result = await airtableListBases(context?.userId);
+        break;
+      case 'airtable_list_records':
+        result = await airtableListRecords(context?.userId, args.baseId as string, args.tableId as string, args.maxRecords as number | undefined);
+        break;
+      case 'airtable_create_record':
+        result = await airtableCreateRecordTool(context?.userId, args.baseId as string, args.tableId as string, args.fields as Record<string, unknown>);
+        break;
       default:
         return { success: false, output: `Unknown tool: ${name}`, executionTimeMs: Date.now() - startTime };
     }
@@ -2110,6 +2146,136 @@ async function githubCreateFile(userId?: string, owner?: string, repo?: string, 
   if (error) throw new Error(error);
   const result = data as { content: { html_url: string } };
   return `File ${sha ? 'updated' : 'created'}: ${result.content.html_url}`;
+}
+
+// GOR-140: Notion tool helpers
+async function getNotionToken(userId?: string): Promise<string> {
+  if (!userId) throw new Error('User ID required for Notion operations');
+  const { getConnection } = await import('./oauth');
+  const conn = await getConnection(userId, 'notion');
+  if (!conn) throw new Error('Notion not connected. Go to Integrations → Connect Notion.');
+  return conn.access_token;
+}
+
+async function notionSearch(userId?: string, query?: string) {
+  const token = await getNotionToken(userId);
+  const { searchPages } = await import('./notion');
+  const { data, error } = await searchPages(token, query);
+  if (error) throw new Error(error);
+  return (data.results || []).map((p: { id: string; properties: Record<string, unknown> }) => {
+    const titleProp = Object.values(p.properties).find((v: unknown) => (v as { title?: unknown[] }).title) as { title?: Array<{ plain_text: string }> } | undefined;
+    const title = titleProp?.title?.map((t) => t.plain_text).join('') || 'Untitled';
+    return `${title} (${p.id})`;
+  }).join('\n') || 'No pages found.';
+}
+
+async function notionGetPage(userId: string | undefined, pageId: string) {
+  const token = await getNotionToken(userId);
+  const { getPage, getBlockChildren } = await import('./notion');
+  const { data: page, error } = await getPage(token, pageId);
+  if (error) throw new Error(error);
+  const titleProp = Object.values(page.properties).find((v: unknown) => (v as { title?: unknown[] }).title) as { title?: Array<{ plain_text: string }> } | undefined;
+  const title = titleProp?.title?.map((t) => t.plain_text).join('') || 'Untitled';
+  const blocks = await getBlockChildren(token, pageId);
+  const content = (blocks.data?.results || []).map((b: { type: string; [key: string]: unknown }) => {
+    const block = b[b.type] as { rich_text?: Array<{ plain_text: string }> } | undefined;
+    return block?.rich_text?.map((t) => t.plain_text).join('') || '';
+  }).filter(Boolean).join('\n');
+  return `# ${title}\n\n${content.slice(0, 20000)}`;
+}
+
+async function notionCreatePage(userId?: string, databaseId?: string, properties?: Record<string, unknown>) {
+  const token = await getNotionToken(userId);
+  const { createPage } = await import('./notion');
+  const { data, error } = await createPage(token, databaseId!, properties!);
+  if (error) throw new Error(error);
+  return `Page created: ${data.url}`;
+}
+
+async function notionListDatabases(userId?: string) {
+  const token = await getNotionToken(userId);
+  const { listDatabases } = await import('./notion');
+  const { data, error } = await listDatabases(token);
+  if (error) throw new Error(error);
+  return (data.results || []).map((d: { id: string; title: Array<{ plain_text: string }> }) =>
+    `${d.title.map((t) => t.plain_text).join('')} (${d.id})`
+  ).join('\n') || 'No databases found.';
+}
+
+async function notionQueryDatabase(userId?: string, databaseId?: string, filter?: unknown) {
+  const token = await getNotionToken(userId);
+  const { queryDatabase } = await import('./notion');
+  const { data, error } = await queryDatabase(token, databaseId!, filter as Record<string, unknown>);
+  if (error) throw new Error(error);
+  return `${data.results.length} records found.\n${JSON.stringify(data.results.slice(0, 5), null, 2).slice(0, 10000)}`;
+}
+
+// GOR-140: Slack tool helpers
+async function getSlackToken(userId?: string): Promise<string> {
+  if (!userId) throw new Error('User ID required for Slack operations');
+  const { getConnection } = await import('./oauth');
+  const conn = await getConnection(userId, 'slack');
+  if (!conn) throw new Error('Slack not connected. Go to Integrations → Connect Slack.');
+  return conn.access_token;
+}
+
+async function slackListChannels(userId?: string) {
+  const token = await getSlackToken(userId);
+  const { listChannels } = await import('./slack');
+  const { data, error } = await listChannels(token);
+  if (error) throw new Error(error);
+  return (data.channels || []).map((c: { name: string; id: string; is_member: boolean }) =>
+    `#${c.name} (${c.id})${c.is_member ? ' ✓' : ''}`
+  ).join('\n') || 'No channels found.';
+}
+
+async function slackSendMessageTool(userId?: string, channel?: string, text?: string) {
+  const token = await getSlackToken(userId);
+  const { sendMessage } = await import('./slack');
+  const { data, error } = await sendMessage(token, channel!, text!);
+  if (error) throw new Error(error);
+  return `Message sent to ${channel}`;
+}
+
+async function slackSearchMessages(userId?: string, query?: string) {
+  const token = await getSlackToken(userId);
+  const { searchMessages } = await import('./slack');
+  const { data, error } = await searchMessages(token, query!);
+  if (error) throw new Error(error);
+  return `${data.messages?.matches?.length || 0} results found.\n${JSON.stringify(data.messages?.matches?.slice(0, 5), null, 2).slice(0, 10000)}`;
+}
+
+// GOR-140: Airtable tool helpers
+async function getAirtableToken(userId?: string): Promise<string> {
+  if (!userId) throw new Error('User ID required for Airtable operations');
+  const { getConnection } = await import('./oauth');
+  const conn = await getConnection(userId, 'airtable');
+  if (!conn) throw new Error('Airtable not connected. Go to Integrations → Connect Airtable.');
+  return conn.access_token;
+}
+
+async function airtableListBases(userId?: string) {
+  const token = await getAirtableToken(userId);
+  const { listBases } = await import('./airtable');
+  const { data, error } = await listBases(token);
+  if (error) throw new Error(error);
+  return (data.bases || []).map((b: { name: string; id: string }) => `${b.name} (${b.id})`).join('\n') || 'No bases found.';
+}
+
+async function airtableListRecords(userId?: string, baseId?: string, tableId?: string, maxRecords?: number) {
+  const token = await getAirtableToken(userId);
+  const { listRecords } = await import('./airtable');
+  const { data, error } = await listRecords(token, baseId!, tableId!, { maxRecords: maxRecords || 20 });
+  if (error) throw new Error(error);
+  return `${data.records?.length || 0} records.\n${JSON.stringify(data.records?.slice(0, 5), null, 2).slice(0, 10000)}`;
+}
+
+async function airtableCreateRecordTool(userId?: string, baseId?: string, tableId?: string, fields?: Record<string, unknown>) {
+  const token = await getAirtableToken(userId);
+  const { createRecord } = await import('./airtable');
+  const { data, error } = await createRecord(token, baseId!, tableId!, fields!);
+  if (error) throw new Error(error);
+  return `Record created: ${data.id}`;
 }
 
 // GOR-142: Integration availability checker
