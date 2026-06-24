@@ -56,7 +56,7 @@ export async function getToolByName(name: string) {
 }
 
 // Tool execution
-export async function executeTool(name: string, args: Record<string, unknown>, context?: { appId?: string; chatId?: string }): Promise<ToolResult> {
+export async function executeTool(name: string, args: Record<string, unknown>, context?: { appId?: string; chatId?: string; userId?: string }): Promise<ToolResult> {
   const startTime = Date.now();
   try {
     let result: string;
@@ -396,6 +396,28 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
         break;
       case 'ms365_calendar_create':
         result = await ms365CalendarCreate(args.subject as string, args.start as string, args.end as string, args.attendees as string[] | undefined);
+        break;
+      // GOR-139: GitHub tools
+      case 'github_list_repos':
+        result = await githubListRepos(context?.userId, args.per_page as number | undefined);
+        break;
+      case 'github_list_issues':
+        result = await githubListIssues(context?.userId, args.owner as string, args.repo as string, args.state as string | undefined);
+        break;
+      case 'github_create_issue':
+        result = await githubCreateIssue(context?.userId, args.owner as string, args.repo as string, args.title as string, args.body as string | undefined, args.labels as string[] | undefined);
+        break;
+      case 'github_list_prs':
+        result = await githubListPRs(context?.userId, args.owner as string, args.repo as string, args.state as string | undefined);
+        break;
+      case 'github_list_workflows':
+        result = await githubListWorkflows(context?.userId, args.owner as string, args.repo as string);
+        break;
+      case 'github_get_file':
+        result = await githubGetFile(context?.userId, args.owner as string, args.repo as string, args.path as string, args.ref as string | undefined);
+        break;
+      case 'github_create_file':
+        result = await githubCreateFile(context?.userId, args.owner as string, args.repo as string, args.path as string, args.content as string, args.message as string, args.branch as string | undefined);
         break;
       default:
         return { success: false, output: `Unknown tool: ${name}`, executionTimeMs: Date.now() - startTime };
@@ -2009,6 +2031,85 @@ export function parseToolCalls(content: string): { name: string; args: Record<st
     } catch { /* skip malformed */ }
   }
   return toolCalls;
+}
+
+// GOR-139: GitHub tool helpers — uses OAuth connection
+async function getGitHubToken(userId?: string): Promise<string> {
+  if (!userId) throw new Error('User ID required for GitHub operations');
+  const { getConnection } = await import('./oauth');
+  const conn = await getConnection(userId, 'github');
+  if (!conn) throw new Error('GitHub not connected. Go to Integrations → Connect GitHub.');
+  return conn.access_token;
+}
+
+async function githubListRepos(userId?: string, perPage?: number) {
+  const token = await getGitHubToken(userId);
+  const { listRepos } = await import('./github');
+  const { data, error } = await listRepos(token, perPage || 20);
+  if (error) throw new Error(error);
+  return (data as Array<{ full_name: string; description: string; stargazers_count: number; language: string; html_url: string }>)
+    .map(r => `${r.full_name} ⭐${r.stargazers_count} [${r.language || 'n/a'}] — ${r.description || 'No description'}\n${r.html_url}`)
+    .join('\n\n');
+}
+
+async function githubListIssues(userId?: string, owner?: string, repo?: string, state?: string) {
+  const token = await getGitHubToken(userId);
+  const { listIssues } = await import('./github');
+  const { data, error } = await listIssues(token, owner!, repo!, state || 'open');
+  if (error) throw new Error(error);
+  return (data as Array<{ number: number; title: string; state: string; user: { login: string }; html_url: string }>)
+    .map(i => `#${i.number} [${i.state}] ${i.title} — by ${i.user.login}\n${i.html_url}`)
+    .join('\n') || 'No issues found.';
+}
+
+async function githubCreateIssue(userId?: string, owner?: string, repo?: string, title?: string, body?: string, labels?: string[]) {
+  const token = await getGitHubToken(userId);
+  const { createIssue } = await import('./github');
+  const { data, error } = await createIssue(token, owner!, repo!, title!, body, labels);
+  if (error) throw new Error(error);
+  const issue = data as { number: number; html_url: string };
+  return `Issue #${issue.number} created: ${issue.html_url}`;
+}
+
+async function githubListPRs(userId?: string, owner?: string, repo?: string, state?: string) {
+  const token = await getGitHubToken(userId);
+  const { listPullRequests } = await import('./github');
+  const { data, error } = await listPullRequests(token, owner!, repo!, state || 'open');
+  if (error) throw new Error(error);
+  return (data as Array<{ number: number; title: string; state: string; user: { login: string }; html_url: string }>)
+    .map(pr => `PR #${pr.number} [${pr.state}] ${pr.title} — by ${pr.user.login}\n${pr.html_url}`)
+    .join('\n') || 'No pull requests found.';
+}
+
+async function githubListWorkflows(userId?: string, owner?: string, repo?: string) {
+  const token = await getGitHubToken(userId);
+  const { listWorkflows } = await import('./github');
+  const { data, error } = await listWorkflows(token, owner!, repo!);
+  if (error) throw new Error(error);
+  const workflows = (data as { workflows: Array<{ id: number; name: string; state: string; html_url: string }> }).workflows;
+  return workflows?.map(w => `${w.name} [${w.state}] — ${w.html_url}`).join('\n') || 'No workflows found.';
+}
+
+async function githubGetFile(userId?: string, owner?: string, repo?: string, path?: string, ref?: string) {
+  const token = await getGitHubToken(userId);
+  const { getFile } = await import('./github');
+  const { data, error } = await getFile(token, owner!, repo!, path!, ref);
+  if (error) throw new Error(error);
+  const file = data as { content: string; encoding: string; sha: string; size: number };
+  const content = file.encoding === 'base64' ? Buffer.from(file.content, 'base64').toString('utf-8') : file.content;
+  return `File: ${path} (${file.size} bytes, sha: ${file.sha.slice(0, 8)})\n\n${content.slice(0, 30000)}`;
+}
+
+async function githubCreateFile(userId?: string, owner?: string, repo?: string, path?: string, content?: string, message?: string, branch?: string) {
+  const token = await getGitHubToken(userId);
+  // Check if file exists (need sha for update)
+  const { getFile, createOrUpdateFile } = await import('./github');
+  const existing = await getFile(token, owner!, repo!, path!, branch);
+  const sha = existing.data ? (existing.data as { sha: string }).sha : undefined;
+  const { data, error } = await createOrUpdateFile(token, owner!, repo!, path!, content!, message!, sha, branch);
+  if (error) throw new Error(error);
+  const result = data as { content: { html_url: string } };
+  return `File ${sha ? 'updated' : 'created'}: ${result.content.html_url}`;
 }
 
 // GOR-142: Integration availability checker
