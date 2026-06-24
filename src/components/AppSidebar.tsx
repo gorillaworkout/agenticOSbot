@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-type SidebarSection = 'overview' | 'knowledge' | 'codebase' | 'settings';
+type SidebarSection = 'overview' | 'knowledge' | 'codebase' | 'settings' | 'integrations';
 
 interface MenuItem {
   id: string;
@@ -17,6 +17,7 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'knowledge', icon: '🕸️', label: 'Knowledge Graph', type: 'page' },
   { id: 'codebase', icon: '🔬', label: 'Codebase Graph', type: 'page' },
   { id: 'bots', icon: '🤖', label: 'Bot Manager', type: 'external', href: '/bots' },
+  { id: 'integrations', icon: '🔗', label: 'Integrations', type: 'external', href: '/integrations' },
   { id: 'settings', icon: '⚙️', label: 'System Info', type: 'info' },
 ];
 
