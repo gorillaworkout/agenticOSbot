@@ -63,8 +63,8 @@ export async function POST(request: Request) {
     const { event_type, app_id } = event.header;
 
     // Find lark config for this app
-    const config = await getOne<{ id: string; user_id: string; app_secret: string }>(
-      'SELECT id, user_id, app_secret FROM lark_config WHERE app_id = $1 AND enabled = true',
+    const config = await getOne<{ id: string; user_id: string; app_secret: string; bot_open_id: string }>(
+      'SELECT id, user_id, app_secret, bot_open_id FROM lark_config WHERE app_id = $1 AND enabled = true',
       [app_id]
     );
     if (!config) {
@@ -111,6 +111,14 @@ export async function POST(request: Request) {
       const senderId = ((msg.sender as Record<string, unknown>)?.sender_id as Record<string, unknown>)?.open_id as string;
 
       if (!chatId) return ok({ received: true });
+
+      // GOR-119: Group chat — only respond when bot is mentioned
+      const mentions = message.mentions as Array<{ key: string; id: { open_id: string; union_id: string }; name: string }> | undefined;
+      const botMentioned = mentions?.some(m => m.id?.open_id === config.bot_open_id);
+      if (chatType === 'group' && !botMentioned) {
+        log.debug({ chatId, messageId }, 'Group message without mention, ignoring');
+        return ok({ received: true, skipped: 'no_mention' });
+      }
 
       // Deduplicate: skip if this message was already processed recently
       if (isDuplicate(messageId)) {
@@ -254,15 +262,18 @@ export async function POST(request: Request) {
 
       log.info({ chatId, senderId, text: textContent.slice(0, 100) }, 'Lark message received');
 
-      // Find or create conversation for this Lark chat
+      // GOR-119: Group chats — per-user conversation context
+      // For groups, use senderId as conversation key so each user has own context
+      // For p2p, use chatId as before
+      const convKey = chatType === 'group' ? senderId : chatId;
       let conv = await getOne<{ id: string }>(
         "SELECT id FROM conversations WHERE user_id = $1 AND metadata->>'lark_chat_id' = $2",
-        [config.user_id, chatId]
+        [config.user_id, convKey]
       );
       if (!conv) {
         conv = await getOne<{ id: string }>(
           `INSERT INTO conversations (user_id, title, metadata) VALUES ($1, $2, $3) RETURNING id`,
-          [config.user_id, `Lark: ${chatId}`, JSON.stringify({ lark_chat_id: chatId, lark_sender_id: senderId })]
+          [config.user_id, chatType === 'group' ? `Lark Group: ${senderId}` : `Lark: ${chatId}`, JSON.stringify({ lark_chat_id: convKey, lark_sender_id: senderId, chat_type: chatType })]
         );
       }
       if (!conv) return ok({ received: true });
