@@ -2010,3 +2010,18 @@ export function parseToolCalls(content: string): { name: string; args: Record<st
   }
   return toolCalls;
 }
+
+// GOR-142: Integration availability checker
+export function checkIntegrationForTool(toolName: string): { available: boolean; integration?: string; feature?: string; steps?: string[] } {
+  const mapping: Record<string, { integration: string; feature: string; steps: string[] }> = {
+    'lark_calendar_events': { integration: 'Lark', feature: 'check your calendar', steps: ['Connect Lark app in Settings', 'Grant calendar permission'] },
+    'lark_task_list': { integration: 'Lark', feature: 'manage tasks', steps: ['Connect Lark app in Settings', 'Grant task permission'] },
+    'lark_approval_list': { integration: 'Lark', feature: 'check approvals', steps: ['Connect Lark app in Settings', 'Grant approval permission'] },
+    'lark_bitable_list': { integration: 'Lark', feature: 'access Bitable data', steps: ['Connect Lark app in Settings', 'Grant bitable permission'] },
+    'github_create_issue': { integration: 'GitHub', feature: 'create issues', steps: ['Go to Integrations page', 'Connect GitHub with OAuth'] },
+    'notion_create_page': { integration: 'Notion', feature: 'create Notion pages', steps: ['Go to Integrations page', 'Connect Notion with OAuth'] },
+  };
+  const config = mapping[toolName];
+  if (!config) return { available: true };
+  return { available: false, ...config };
+}

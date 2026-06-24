@@ -530,3 +530,32 @@ export function searchResultCard(
 export function actionValue(action: string, params: Record<string, unknown> = {}): Record<string, unknown> {
   return { action, ...params };
 }
+
+/** GOR-142: Integration not connected — guided setup card */
+export function integrationNotConnectedCard(
+  integrationName: string,
+  feature: string,
+  setupSteps: string[],
+  setupUrl?: string
+): LarkCard {
+  const stepsMd = setupSteps.map((s, i) => `${i + 1}. ${s}`).join('\n');
+  return {
+    config: { enable_forward: true },
+    header: {
+      title: { tag: 'plain_text', content: `🔗 ${integrationName} Not Connected` },
+      template: 'orange' as CardColor,
+    },
+    elements: [
+      md(`You asked me to **${feature}**, but **${integrationName}** is not connected yet.`),
+      divider(),
+      md(`**Setup steps:**\n${stepsMd}`),
+      ...(setupUrl ? [actionBlock([
+        button('🔗 Connect Now', actionValue('open_url', { url: setupUrl }), { type: 'primary' }),
+        button('📖 Learn More', actionValue('open_url', { url: 'https://docs.agenticos.app/integrations' }), { type: 'default' }),
+      ])] : [actionBlock([
+        button('🔗 Go to Integrations', actionValue('open_url', { url: '/integrations' }), { type: 'primary' }),
+      ])]),
+      note('You can also type /integrations to manage all connections.'),
+    ],
+  };
+}
