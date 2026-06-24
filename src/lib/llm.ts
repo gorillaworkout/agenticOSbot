@@ -71,6 +71,25 @@ export async function chatCompletion(
   return result;
 }
 
+// GOR-106: Embedding generation for semantic search
+export async function generateEmbedding(text: string): Promise<number[]> {
+  const response = await fetch(`${LLM_API_URL}/v1/embeddings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(LLM_API_KEY ? { Authorization: `Bearer ${LLM_API_KEY}` } : {}),
+    },
+    body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Embedding API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.data?.[0]?.embedding || [];
+}
+
 export async function* chatCompletionStream(
   messages: ChatMessage[],
   options: LLMOptions = {}

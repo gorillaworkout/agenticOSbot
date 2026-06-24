@@ -414,3 +414,63 @@ export async function getGraphStats(userId: string): Promise<Record<string, unkn
 export async function exportToMarkdown(userId: string): Promise<string> {
   return exportVault(userId);
 }
+
+// === GOR-106: pgvector Semantic Memory ===
+
+export async function storeEmbedding(userId: string, content: string, metadata: Record<string, unknown> = {}): Promise<string> {
+  const { generateEmbedding } = await import('@/lib/llm');
+  const embedding = await generateEmbedding(content);
+  if (embedding.length === 0) throw new Error('Empty embedding');
+  const vectorStr = `[${embedding.join(',')}]`;
+  const result = await getOne<{ id: string }>(
+    `INSERT INTO embeddings (user_id, content, embedding, metadata) VALUES ($1, $2, $3::vector, $4) RETURNING id`,
+    [userId, content, vectorStr, JSON.stringify(metadata)]
+  );
+  return result!.id;
+}
+
+export async function semanticSearch(userId: string, query: string, limit: number = 5): Promise<Array<{ content: string; score: number; metadata: Record<string, unknown> }>> {
+  const { generateEmbedding } = await import('@/lib/llm');
+  const embedding = await generateEmbedding(query);
+  if (embedding.length === 0) return [];
+  const vectorStr = `[${embedding.join(',')}]`;
+  const rows = await getMany<{ content: string; score: number; metadata: Record<string, unknown> }>(
+    `SELECT content, 1 - (embedding <=> $2::vector) as score, metadata
+     FROM embeddings WHERE user_id = $1
+     ORDER BY embedding <=> $2::vector LIMIT $3`,
+    [userId, vectorStr, limit]
+  );
+  return rows;
+}
+
+export async function autoEmbedContent(userId: string): Promise<{ notes: number; entities: number }> {
+  // Auto-embed notes and entities that don't have embeddings yet
+  const notes = await getMany<{ id: string; title: string; content: string }>(
+    `SELECT n.id, n.title, n.content FROM notes n
+     WHERE n.user_id = $1 AND NOT EXISTS (
+       SELECT 1 FROM embeddings e WHERE e.metadata->>'source_id' = n.id
+     ) LIMIT 50`,
+    [userId]
+  );
+  const entities = await getMany<{ id: string; name: string; type: string }>(
+    `SELECT id, name, type FROM entities
+     WHERE user_id = $1 AND NOT EXISTS (
+       SELECT 1 FROM embeddings e WHERE e.metadata->>'source_id' = id
+     ) LIMIT 50`,
+    [userId]
+  );
+  let embedded = 0;
+  for (const note of notes) {
+    try {
+      await storeEmbedding(userId, `${note.title}\n${note.content}`, { type: 'note', source_id: note.id });
+      embedded++;
+    } catch { /* skip individual failures */ }
+  }
+  for (const entity of entities) {
+    try {
+      await storeEmbedding(userId, `${entity.name} (${entity.type})`, { type: 'entity', source_id: entity.id });
+      embedded++;
+    } catch { /* skip */ }
+  }
+  return { notes: notes.length, entities: entities.length };
+}

@@ -346,10 +346,23 @@ export async function POST(request: Request) {
       // GOR-130: Inject user persona from learned memory
       const userPersona = await getUserPersona(config.user_id);
 
+      // GOR-106: Semantic search for relevant memories
+      let semanticContext = '';
+      try {
+        const { semanticSearch } = await import('@/lib/learning');
+        const relevantMemories = await semanticSearch(config.user_id, textContent, 3);
+        if (relevantMemories.length > 0 && relevantMemories[0].score > 0.7) {
+          semanticContext = '\n\nRELEVANT MEMORIES:\n' + relevantMemories.map(m => '- ' + m.content.slice(0, 200) + ' (' + (m.score * 100).toFixed(0) + '%)').join('\n');
+        }
+      } catch (semErr) {
+        log.debug({ err: semErr }, 'Semantic search failed');
+      }
+
       const systemPrompt = `You are Agentic OS, responding to messages from Lark. Be concise and helpful.${userPersona ? `
 
 USER CONTEXT (use this to personalize your responses):
 ${userPersona}` : ''}
+
 
 You have access to the following tools:
 ${toolList}
@@ -388,8 +401,11 @@ CRITICAL RULES:
 - For proactive: morning briefing runs automatically at 8am WIB. Meeting reminders push 15min before. Smart context auto-detects doc links, person searches, and quick tasks.
 - For IMAGE analysis: When user sends an image, you can SEE it (multimodal). Describe and analyze the image content directly. No special tool needed.`;
 
+      // GOR-106: Append semantic memories to system prompt
+      const fullSystemPrompt = systemPrompt + (semanticContext ? semanticContext : '');
+
       const chatMessages: { role: 'system' | 'user' | 'assistant'; content: string | Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } }> }[] = [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: fullSystemPrompt },
         ...history.map(m => ({ role: m.role.toLowerCase() as 'user' | 'assistant' | 'system', content: m.content.slice(0, 4000) })),
       ];
 
