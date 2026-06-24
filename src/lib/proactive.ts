@@ -210,6 +210,14 @@ export async function detectSmartContext(message: string, appId: string, chatId:
     if (r.success) return `✅ Quick task created: ${todoMatch[1]}`;
   }
 
+  // NLP-based reminder intent detection (GOR-122)
+  const reminderIntent = detectReminderIntent(message);
+  if (reminderIntent) {
+    const title = reminderIntent.title || 'Reminder';
+    const r = await executeTool('lark_task_create', { title, dueDate: reminderIntent.dueDate }, { appId, chatId });
+    if (r.success) return `⏰ Reminder set: **${title}**${reminderIntent.dueDate ? ` (due: ${reminderIntent.dueDate})` : ''}`;
+  }
+
   return null;
 }
 
@@ -451,4 +459,84 @@ function parseToolCalls(content: string): { name: string; args: Record<string, u
     try { calls.push({ name: match[1], args: JSON.parse(match[2]) }); } catch { /* skip */ }
   }
   return calls;
+}
+
+// === NLP Reminder Intent Detection (GOR-122) ===
+interface ReminderIntent {
+  title: string;
+  dueDate?: string;
+  originalText: string;
+}
+
+function detectReminderIntent(text: string): ReminderIntent | null {
+  const lower = text.toLowerCase();
+
+  // Match reminder patterns: "ingatkan saya ...", "remind me ...", "jangan lupa ...", "nanti jam ..."
+  const patterns = [
+    /(?:ingatkan\s+(?:saya|aku)|remind\s+me|jangan\s+lupa|tolong\s+ingat)[:\s]+(.+)/i,
+    /(?:reminder|ingat)[:\s]+(.+)/i,
+    /(?:set\s+(?:a\s+)?reminder\s+(?:for|to|that))[:\s]+(.+)/i,
+  ];
+
+  let title = '';
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) { title = m[1].trim(); break; }
+  }
+  if (!title) return null;
+
+  const now = new Date();
+  let dueDate: string | undefined;
+
+  // "in X hours/minutes/days"
+  const relMatch = title.match(/(?:in|dalam)\s+(\d+)\s+(?:jam|hour|hr|menit|minute|min|hari|day)/i);
+  if (relMatch) {
+    const num = parseInt(relMatch[1]);
+    const unit = /(jam|hour|hr)/i.test(title) ? 'hours' : /(menit|minute|min)/i.test(title) ? 'minutes' : 'days';
+    const d = new Date(now);
+    if (unit === 'hours') d.setHours(d.getHours() + num);
+    else if (unit === 'minutes') d.setMinutes(d.getMinutes() + num);
+    else d.setDate(d.getDate() + num);
+    dueDate = d.toISOString();
+  }
+
+  // "besok jam HH:MM" / "tomorrow at HH:MM"
+  const tomorrowMatch = title.match(/(?:besok|tomorrow)\s+(?:jam|at|pukul)?\s*(\d{1,2})(?::(\d{2}))?/i);
+  if (tomorrowMatch) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(parseInt(tomorrowMatch[1]), parseInt(tomorrowMatch[2] || '0'), 0, 0);
+    dueDate = d.toISOString();
+  }
+
+  // "lusa jam HH:MM"
+  const lusaMatch = title.match(/(?:lusa)\s+(?:jam|at|pukul)?\s*(\d{1,2})(?::(\d{2}))?/i);
+  if (lusaMatch) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 2);
+    d.setHours(parseInt(lusaMatch[1]), parseInt(lusaMatch[2] || '0'), 0, 0);
+    dueDate = d.toISOString();
+  }
+
+  // "jam HH:MM" (today, future check)
+  const todayTimeMatch = title.match(/(?:jam|at|pukul)\s*(\d{1,2})(?::(\d{2}))?/i);
+  if (todayTimeMatch && !tomorrowMatch && !lusaMatch) {
+    const d = new Date(now);
+    d.setHours(parseInt(todayTimeMatch[1]), parseInt(todayTimeMatch[2] || '0'), 0, 0);
+    if (d <= now) d.setDate(d.getDate() + 1);
+    dueDate = d.toISOString();
+  }
+
+  // "nanti sore/siang/pagi/malam"
+  const nantiMatch = title.match(/(?:nanti)\s+(sore|siang|pagi|malam)/i);
+  if (nantiMatch && !todayTimeMatch) {
+    const d = new Date(now);
+    const timeMap: Record<string, number> = { pagi: 9, siang: 13, sore: 17, malam: 21 };
+    const hour = timeMap[nantiMatch[1].toLowerCase()] || 17;
+    d.setHours(hour, 0, 0, 0);
+    if (d <= now) d.setDate(d.getDate() + 1);
+    dueDate = d.toISOString();
+  }
+
+  return { title, dueDate, originalText: text };
 }
