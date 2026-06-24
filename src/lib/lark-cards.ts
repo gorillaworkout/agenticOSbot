@@ -315,22 +315,28 @@ export function loadingCard(message: string): LarkCard {
  * value payload: { action: 'approval_approve'|'approval_reject', instance_code, task_id }
  */
 export function confirmationCard(
-  title: string,
   body: string,
-  approveValue: Record<string, unknown>,
-  rejectValue: Record<string, unknown>
+  options?: { confirmLabel?: string; cancelLabel?: string; destructive?: boolean; pendingId?: string; chatId?: string }
 ): LarkCard {
+  const confirmLabel = options?.confirmLabel || '✅ Approve';
+  const cancelLabel = options?.cancelLabel || '❌ Reject';
+  const pendingId = options?.pendingId || '';
+  const chatId = options?.chatId || '';
+
   return buildCard(
     [
       md(body),
       divider(),
       actionBlock([
-        button('✅ Approve', approveValue, { type: 'primary', confirm: { title: 'Confirm', text: 'Are you sure you want to approve this action?' } }),
-        button('❌ Reject', rejectValue, { type: 'danger' }),
+        button(confirmLabel, { action: 'hitl_confirm', pending_id: pendingId, chat_id: chatId }, {
+          type: 'primary',
+          ...(options?.destructive ? { confirm: { title: 'Confirm', text: 'This action cannot be undone. Proceed?' } } : {})
+        }),
+        button(cancelLabel, { action: 'hitl_reject', pending_id: pendingId, chat_id: chatId }, { type: 'danger' }),
       ], 'bisect'),
     ],
     {
-      header: header(`⚠️ ${title}`, { color: 'orange' }),
+      header: header('⚠️ Confirmation Required', { color: 'orange' }),
       config: { width_mode: 'default' },
     }
   );

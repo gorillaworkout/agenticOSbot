@@ -1,7 +1,7 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { ok, err, parseBody } from '@/lib/api';
 import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile } from '@/lib/lark';
-import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, searchResultCard, type LarkCard } from '@/lib/lark-cards';
+import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, searchResultCard, confirmationCard, type LarkCard } from '@/lib/lark-cards';
 import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } from '@/lib/proactive';
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
@@ -9,6 +9,23 @@ import { getToolDefinitions, executeTool } from '@/lib/tools';
 import { autoLearn } from '@/lib/learning';
 
 const log = childLogger('webhook:lark');
+
+// HITL: Destructive tools that require user confirmation before execution
+const DESTRUCTIVE_TOOLS = new Set([
+  'lark_calendar_delete', 'lark_calendar_update',
+  'lark_task_complete',
+  'lark_approval_approve', 'lark_approval_reject',
+  'lark_docs_update', 'lark_docs_create',
+  'lark_sheets_write',
+  'ms365_email_send',
+  'workflow_delete',
+  'note_create', 'note_update',
+  'memory_set',
+]);
+
+function isDestructive(toolName: string): boolean {
+  return DESTRUCTIVE_TOOLS.has(toolName);
+}
 
 // Deduplication: Lark sometimes delivers the same event multiple times
 // Use TTL cache to track recently processed message_ids
@@ -369,6 +386,19 @@ CRITICAL RULES:
         toolsUsed.push(toolCall.name);
         log.info({ tool: toolCall.name, args: toolCall.args, round }, 'Lark tool call');
 
+        // HITL: Intercept destructive tools — send confirmation card first
+        if (isDestructive(toolCall.name)) {
+          const pendingId = await createPendingAction(chatId, app_id, senderId, toolCall.name, toolCall.args);
+          const argsPreview = JSON.stringify(toolCall.args, null, 2).slice(0, 500);
+          const confirmCard = confirmationCard(
+            `⚠️ Confirm: **${toolCall.name}**\n\n\`\`\`\n${argsPreview}\n\`\`\``,
+            { confirmLabel: '✅ Execute', cancelLabel: '❌ Cancel', destructive: true, pendingId, chatId }
+          );
+          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(confirmCard), 'chat_id');
+          finalResponse = `⏳ Waiting for confirmation of \`${toolCall.name}\`. The action will execute once you approve.`;
+          break;
+        }
+
         const result = await executeTool(toolCall.name, toolCall.args, { appId: app_id, chatId: chatId });
         log.info({ tool: toolCall.name, success: result.success, output: result.output.slice(0, 200) }, 'Lark tool result');
 
@@ -507,10 +537,39 @@ async function handleCardAction(event: Record<string, unknown>, appId: string, c
   const actionType = value.action as string;
   const instanceCode = value.instance_code as string;
   const taskId = value.task_id as string;
-  const operatorId = action.operator_id as string || '';
+  const pendingId = value.pending_id as string;
+  const chatId = value.chat_id as string || (action.open_chat_id as string) || '';
+  const operatorId = (action.operator_id as string) || ((action.operator as Record<string, unknown>)?.open_id as string) || '';
 
-  log.info({ actionType, instanceCode, taskId, operatorId }, 'Card action received');
+  log.info({ actionType, instanceCode, taskId, pendingId, operatorId }, 'Card action received');
 
+  // HITL: Confirm destructive action
+  if (actionType === 'hitl_confirm' && pendingId) {
+    const pending = await getOne<{ id: string; chat_id: string; app_id: string; tool_name: string; tool_args: Record<string, unknown> }>(
+      "SELECT * FROM hitl_pending_actions WHERE id = $1 AND status = 'pending' AND expires_at > now()",
+      [pendingId]
+    );
+    if (!pending) {
+      if (chatId) await sendLarkMessage(appId, config.app_secret, chatId, 'interactive', JSON.stringify(errorCard('Action expired', 'This confirmation has expired. Please try again.')), 'chat_id');
+      return;
+    }
+    await query("UPDATE hitl_pending_actions SET status = 'approved' WHERE id = $1", [pendingId]);
+    const result = await executeTool(pending.tool_name, pending.tool_args, { appId: pending.app_id, chatId: pending.chat_id });
+    const resultCard = result.success
+      ? successCard('✅ Action Executed', `${pending.tool_name}\n\n${result.output.slice(0, 500)}`)
+      : errorCard('❌ Action Failed', result.output.slice(0, 500));
+    if (chatId) await sendLarkMessage(appId, config.app_secret, chatId, 'interactive', JSON.stringify(resultCard), 'chat_id');
+    return;
+  }
+
+  // HITL: Reject destructive action
+  if (actionType === 'hitl_reject' && pendingId) {
+    await query("UPDATE hitl_pending_actions SET status = 'rejected' WHERE id = $1", [pendingId]);
+    if (chatId) await sendLarkMessage(appId, config.app_secret, chatId, 'interactive', JSON.stringify(infoCard('❌ Cancelled', 'Action was cancelled.')), 'chat_id');
+    return;
+  }
+
+  // Approval actions (legacy)
   if (actionType === 'approval_approve' && instanceCode && taskId) {
     const result = await executeTool('lark_approval_approve', { instanceId: instanceCode, taskId }, { appId });
     log.info({ result: result.output }, 'Approval approved via card action');
@@ -518,6 +577,14 @@ async function handleCardAction(event: Record<string, unknown>, appId: string, c
     const result = await executeTool('lark_approval_reject', { instanceId: instanceCode, taskId }, { appId });
     log.info({ result: result.output }, 'Approval rejected via card action');
   }
+}
+
+async function createPendingAction(chatId: string, appId: string, userId: string, toolName: string, toolArgs: Record<string, unknown>): Promise<string> {
+  const row = await getOne<{ id: string }>(
+    "INSERT INTO hitl_pending_actions (chat_id, app_id, user_id, tool_name, tool_args) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    [chatId, appId, userId, toolName, JSON.stringify(toolArgs)]
+  );
+  return row?.id || '';
 }
 
 async function handleCalendarEvent(event: Record<string, unknown>) {
