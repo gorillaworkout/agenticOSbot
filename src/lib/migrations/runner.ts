@@ -204,6 +204,30 @@ const migrations: Migration[] = [
     `,
     down: `DROP TABLE IF EXISTS lark_config CASCADE;`,
   },
+  {
+    version: '007',
+    name: 'oauth_connections_table',
+    up: `
+      CREATE TABLE IF NOT EXISTS oauth_connections (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at TIMESTAMPTZ,
+        scopes TEXT[] DEFAULT '{}',
+        provider_user_id TEXT,
+        provider_user_name TEXT,
+        metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(user_id, provider)
+      );
+      CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_connections(user_id);
+      CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_connections(provider);
+    `,
+    down: `DROP TABLE IF EXISTS oauth_connections CASCADE;`,
+  },
 ];
 
 // === Migration Runner ===
