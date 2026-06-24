@@ -1,6 +1,7 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { ok, err, parseBody } from '@/lib/api';
-import { parseLarkEvent, sendLarkMessage, downloadLarkFile } from '@/lib/lark';
+import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile } from '@/lib/lark';
+import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note } from '@/lib/lark-cards';
 import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } from '@/lib/proactive';
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
@@ -245,7 +246,7 @@ export async function POST(request: Request) {
         try {
           const smartResult = await detectSmartContext(textContent, app_id, chatId);
           if (smartResult) {
-            await sendLarkMessage(app_id, config.app_secret, chatId, 'text', JSON.stringify({ text: smartResult }), 'chat_id');
+            await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(defaultCard(smartResult)), 'chat_id');
             await query(
               "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
               [conv.id, smartResult, JSON.stringify({ source: 'lark', smartContext: true })]
@@ -258,7 +259,7 @@ export async function POST(request: Request) {
           // Contextual search fallback — search KB/web for questions
           const contextResult = await detectContextualSearch(textContent, app_id, chatId);
           if (contextResult) {
-            await sendLarkMessage(app_id, config.app_secret, chatId, 'text', JSON.stringify({ text: contextResult }), 'chat_id');
+            await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(defaultCard(contextResult)), 'chat_id');
             await query(
               "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
               [conv.id, contextResult, JSON.stringify({ source: 'lark', contextualSearch: true })]
@@ -409,14 +410,14 @@ CRITICAL RULES:
       // Auto-learn from conversation (fire-and-forget)
       autoLearn(config.user_id, conv.id, textContent, replyText).catch(e => log.error({ err: e }, 'autoLearn failed'));
 
-      // Send reply via Lark
-      await sendLarkMessage(app_id, config.app_secret, chatId, 'text', JSON.stringify({ text: replyText }), 'chat_id');
+      // Send reply via Lark (card format)
+      const card = defaultCard(replyText, { footer: toolsUsed.length > 0 ? `Tools: ${toolsUsed.join(', ')}` : undefined });
+      const sendResult = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(card), 'chat_id');
       } catch (msgErr) {
         log.error({ err: msgErr, chatId, senderId }, 'Lark message processing failed');
         // Try to send error message back to user so they know something went wrong
         try {
-          const errText = `⚠️ Sorry, I encountered an error processing your message. Please try again.`;
-          await sendLarkMessage(app_id, config.app_secret, chatId, 'text', JSON.stringify({ text: errText }), 'chat_id');
+          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(errorCard('Processing failed', 'Sorry, I encountered an error. Please try again.')), 'chat_id');
         } catch (sendErr) {
           log.error({ err: sendErr }, 'Failed to send error message back to Lark');
         }

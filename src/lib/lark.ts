@@ -63,6 +63,34 @@ export async function sendLarkMessage(
 }
 
 /**
+ * Update an existing Lark message in-place (e.g. replace loading card with final card).
+ * Only supports updating msg_type=interactive (cards).
+ */
+export async function updateLarkMessage(
+  appId: string,
+  appSecret: string,
+  messageId: string,
+  content: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const token = await getTenantAccessToken(appId, appSecret);
+    const res = await fetch(`${LARK_BASE}/im/v1/messages/${messageId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json();
+    if (data.code !== 0) return { ok: false, error: data.msg };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/**
  * Download a file or media resource from Lark by message_id + file_key.
  * Returns raw bytes + content-type.
  */
