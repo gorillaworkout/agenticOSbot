@@ -199,3 +199,48 @@ export function parseLarkEvent(body: unknown): LarkEvent {
   }
   return body as LarkEvent;
 }
+
+// GOR-125: Emoji reaction as instant acknowledgement
+export async function addLarkReaction(
+  appId: string,
+  appSecret: string,
+  messageId: string,
+  emojiType: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const token = await getTenantAccessToken(appId, appSecret);
+    const res = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ reaction_type: { emoji_type: emojiType } }),
+    });
+    const data = await res.json();
+    if (data.code !== 0) return { ok: false, error: data.msg };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
+export async function removeLarkReaction(
+  appId: string,
+  appSecret: string,
+  messageId: string,
+  reactionId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const token = await getTenantAccessToken(appId, appSecret);
+    const res = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions/${reactionId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (data.code !== 0) return { ok: false, error: data.msg };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}

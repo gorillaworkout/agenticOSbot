@@ -1,6 +1,6 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { ok, err, parseBody } from '@/lib/api';
-import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile } from '@/lib/lark';
+import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile, addLarkReaction } from '@/lib/lark';
 import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, searchResultCard, confirmationCard, type LarkCard } from '@/lib/lark-cards';
 import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } from '@/lib/proactive';
 import { childLogger } from '@/lib/logger';
@@ -261,6 +261,11 @@ export async function POST(request: Request) {
       if (!textContent && !fileContext) return ok({ received: true });
 
       log.info({ chatId, senderId, text: textContent.slice(0, 100) }, 'Lark message received');
+
+      // GOR-125: Emoji reaction — instant acknowledgement
+      if (messageId) {
+        addLarkReaction(app_id, config.app_secret, messageId, 'OnIt').catch(() => {});
+      }
 
       // GOR-120: Slash commands — intercept before LLM for fast execution
       const slashResult = await handleSlashCommand(textContent, app_id, config, chatId, senderId, rootId || parentId);
