@@ -18,6 +18,7 @@
     "csv-parse": "^7.0.0",
     "d3": "^7.9.0",
     "date-fns-tz": "^3.2.0",
+    "eventemitter3": "^5.0.4",
     "gray-matter": "^4.0.3",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
