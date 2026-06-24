@@ -1,7 +1,7 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { ok, err, parseBody } from '@/lib/api';
 import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile } from '@/lib/lark';
-import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note } from '@/lib/lark-cards';
+import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, type LarkCard } from '@/lib/lark-cards';
 import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } from '@/lib/proactive';
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
@@ -410,9 +410,9 @@ CRITICAL RULES:
       // Auto-learn from conversation (fire-and-forget)
       autoLearn(config.user_id, conv.id, textContent, replyText).catch(e => log.error({ err: e }, 'autoLearn failed'));
 
-      // Send reply via Lark (card format)
-      const card = defaultCard(replyText, { footer: toolsUsed.length > 0 ? `Tools: ${toolsUsed.join(', ')}` : undefined });
-      const sendResult = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(card), 'chat_id');
+      // Send reply via Lark (auto-detect card type based on tools used)
+      const sendCard = autoDetectCard(replyText, toolsUsed);
+      const sendResult = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(sendCard), 'chat_id');
       } catch (msgErr) {
         log.error({ err: msgErr, chatId, senderId }, 'Lark message processing failed');
         // Try to send error message back to user so they know something went wrong
@@ -557,4 +557,69 @@ async function handleCalendarEvent(event: Record<string, unknown>) {
   );
 
   log.info({ calendarId, eventId, summary, start }, 'Calendar event cached');
+}
+
+/**
+ * Auto-detect which card type to use based on the tools that were called.
+ * Returns the appropriate card for the reply.
+ */
+function autoDetectCard(text: string, toolsUsed: string[]): LarkCard {
+  const lastTool = toolsUsed[toolsUsed.length - 1];
+  const footer = toolsUsed.length > 0 ? `Tools: ${toolsUsed.join(' → ')}` : undefined;
+
+  // Calendar events → calendar card
+  if (lastTool === 'lark_calendar_events' || lastTool === 'lark_calendar_list') {
+    const events = parseCalendarEvents(text);
+    if (events.length > 0) return calendarCard(events, { dateRange: 'Upcoming' });
+  }
+
+  // Task list → task card
+  if (lastTool === 'lark_task_list' || lastTool === 'lark_task_search') {
+    const tasks = parseTasks(text);
+    if (tasks.length > 0) return taskListCard(tasks);
+  }
+
+  // Approval list → approval card
+  if (lastTool === 'lark_approval_list') {
+    // Use default card since approvals need interactive buttons (complex)
+    return defaultCard(text, { footer });
+  }
+
+  // Calendar create/update/delete → success card
+  if (lastTool === 'lark_calendar_create') return successCard('Event Created', text);
+  if (lastTool === 'lark_calendar_update') return successCard('Event Updated', text);
+  if (lastTool === 'lark_calendar_delete') return successCard('Event Deleted', text);
+  if (lastTool === 'lark_task_create') return successCard('Task Created', text);
+  if (lastTool === 'lark_task_complete') return successCard('Task Completed', text);
+
+  // Default → standard card
+  return defaultCard(text, { footer });
+}
+
+/** Parse calendar event text output into structured data */
+function parseCalendarEvents(text: string): Array<{ summary: string; startTime: string; eventId?: string }> {
+  const events: Array<{ summary: string; startTime: string; eventId?: string }> = [];
+  const lines = text.split('\n').filter(l => l.trim());
+  for (const line of lines) {
+    // Match: "1. Summary - Date Time WIB (event_id: xxx)"
+    const match = line.match(/\d+\.\s*(.+?)\s*-\s*(.+?)\s*(?:WIB|\()(?:event_id:\s*(\S+))?/);
+    if (match) {
+      events.push({ summary: match[1].trim(), startTime: match[2].trim(), eventId: match[3] });
+    }
+  }
+  return events;
+}
+
+/** Parse task text output into structured data */
+function parseTasks(text: string): Array<{ title: string; done?: boolean; taskId?: string }> {
+  const tasks: Array<{ title: string; done?: boolean; taskId?: string }> = [];
+  const lines = text.split('\n').filter(l => l.trim());
+  for (const line of lines) {
+    // Match: "1. ✅ Title (id: xxx)" or "1. ⬜ Title (id: xxx)"
+    const match = line.match(/\d+\.\s*(✅|⬜)\s*(.+?)\s*(?:\(id:\s*(\S+)\))?/);
+    if (match) {
+      tasks.push({ title: match[2].trim(), done: match[1] === '✅', taskId: match[3] });
+    }
+  }
+  return tasks;
 }

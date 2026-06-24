@@ -367,6 +367,119 @@ export function listCard(
   });
 }
 
+/**
+ * Calendar event card — displays a list of calendar events in a structured format.
+ * Each event: summary, time, optional VC link, optional attendees.
+ */
+export function calendarCard(
+  events: Array<{
+    summary: string;
+    startTime: string; // human-readable
+    endTime?: string;
+    location?: string;
+    vcLink?: string;
+    eventId?: string;
+    isAllDay?: boolean;
+  }>,
+  options?: { title?: string; dateRange?: string; emptyText?: string }
+): LarkCard {
+  const elements: CardElement[] = [];
+
+  if (events.length === 0) {
+    elements.push(md(options?.emptyText || '_No events scheduled._'));
+  } else {
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      const timeStr = e.isAllDay ? '📅 All day' : `🕐 ${e.startTime}${e.endTime ? ` → ${e.endTime}` : ''}`;
+      let line = `**${i + 1}. ${e.summary}**\n${timeStr}`;
+      if (e.location) line += `\n📍 ${e.location}`;
+      if (e.vcLink) line += `\n🔗 [Join Meeting](${e.vcLink})`;
+      elements.push(md(line));
+      if (i < events.length - 1) elements.push(divider());
+    }
+  }
+
+  const title = options?.title || '📅 Calendar';
+  const subtitle = options?.dateRange;
+
+  return buildCard(elements, {
+    header: header(title, { color: 'blue', ...(subtitle && { subtitle }) }),
+    config: { width_mode: 'default' },
+  });
+}
+
+/**
+ * Task list card — displays tasks with status icons and action buttons.
+ */
+export function taskListCard(
+  tasks: Array<{
+    title: string;
+    done?: boolean;
+    dueDate?: string;
+    taskId?: string;
+    assignee?: string;
+  }>,
+  options?: { title?: string; emptyText?: string; showCompleteButton?: boolean }
+): LarkCard {
+  const elements: CardElement[] = [];
+
+  if (tasks.length === 0) {
+    elements.push(md(options?.emptyText || '_No tasks found._'));
+  } else {
+    for (const task of tasks) {
+      const status = task.done ? '✅' : '⬜';
+      let line = `${status} **${task.title}**`;
+      if (task.dueDate) line += ` — Due: ${task.dueDate}`;
+      if (task.assignee) line += ` — 👤 ${task.assignee}`;
+      elements.push(md(line));
+    }
+  }
+
+  return buildCard(elements, {
+    header: header(options?.title || '📋 Tasks', { color: 'violet' }),
+    config: { width_mode: 'default' },
+  });
+}
+
+/**
+ * Approval list card — shows pending approvals with approve/reject buttons.
+ */
+export function approvalListCard(
+  approvals: Array<{
+    title: string;
+    status?: string;
+    instanceCode?: string;
+    taskId?: string;
+    submitter?: string;
+  }>,
+  options?: { emptyText?: string }
+): LarkCard {
+  const elements: CardElement[] = [];
+
+  if (approvals.length === 0) {
+    elements.push(md(options?.emptyText || '_No pending approvals._'));
+  } else {
+    for (const approval of approvals) {
+      let line = `📋 **${approval.title}**`;
+      if (approval.submitter) line += `\n👤 Submitted by: ${approval.submitter}`;
+      if (approval.status) line += `\nStatus: ${approval.status}`;
+      elements.push(md(line));
+      if (approval.instanceCode && approval.taskId) {
+        elements.push(actionBlock([
+          button('✅ Approve', actionValue('approval_approve', { instance_code: approval.instanceCode, task_id: approval.taskId }), { type: 'primary' }),
+          button('❌ Reject', actionValue('approval_reject', { instance_code: approval.instanceCode, task_id: approval.taskId }), { type: 'danger' }),
+        ], 'bisect'));
+      }
+      elements.push(divider());
+    }
+  }
+
+  return buildCard(elements, {
+    header: header('📋 Pending Approvals', { color: 'orange' }),
+    config: { width_mode: 'default' },
+  });
+}
+
 // ─── Card Action Value Helpers ───────────────────────────────────────────────
 
 /** Create a standardized action value for card button callbacks */
