@@ -152,11 +152,16 @@ export async function POST(request: Request) {
                 textContent = `[User uploaded a PDF file "${fileName}" but I could not parse it. Please ask them to describe the content.]`;
               }
             } else if (messageType === 'image') {
-              // For images — note for LLM (vision API enhancement later)
+              // GOR-123: Vision — send image as multimodal content to LLM
               const mime = dl.contentType || 'image/png';
-              log.info({ contentType: dl.contentType }, 'Image downloaded');
-              fileContext = `[User uploaded an image (${mime}). Describe what you see or answer questions about it.]`;
-              textContent = `Please analyze this uploaded image.`;
+              const b64 = dl.buffer.toString('base64');
+              const dataUrl = `data:${mime};base64,${b64}`;
+              log.info({ contentType: mime, sizeKB: Math.round(dl.buffer.length / 1024) }, 'Image downloaded for vision analysis');
+              // Store as structured multimodal content for chat messages
+              fileContext = JSON.stringify({ type: 'image_url', image_url: { url: dataUrl, detail: 'high' } });
+              textContent = 'Please analyze this uploaded image.';
+              // Mark as vision message so chatMessages uses multimodal format
+              (msg as Record<string, unknown>)._isVisionImage = true;
             } else if (fileName?.endsWith('.docx') || dl.contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
               // For DOCX files, extract text with mammoth
               try {
@@ -348,12 +353,19 @@ CRITICAL RULES:
 - For Lark Base (Bitable): use lark_bitable_tables to list tables, lark_bitable_list to read records. When sharing a Base link, auto-discover tables and offer to read data. When user asks about data ("total amount paid", "count rows", etc.), use lark_bitable_list to fetch records then calculate.
 - For Learning: use learn_create to save notes, learn_search to find info, learn_list to browse. When user says "ingat ini", "catat", "remember", "save this" — ALWAYS create a note. Auto-learn important facts from conversations.
 - NEVER say "create it manually" or "do it yourself". USE YOUR TOOLS.
-- For proactive: morning briefing runs automatically at 8am WIB. Meeting reminders push 15min before. Smart context auto-detects doc links, person searches, and quick tasks.`;
+- For proactive: morning briefing runs automatically at 8am WIB. Meeting reminders push 15min before. Smart context auto-detects doc links, person searches, and quick tasks.
+- For IMAGE analysis: When user sends an image, you can SEE it (multimodal). Describe and analyze the image content directly. No special tool needed.`;
 
-      const chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      const chatMessages: { role: 'system' | 'user' | 'assistant'; content: string | Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } }> }[] = [
         { role: 'system', content: systemPrompt },
         ...history.map(m => ({ role: m.role.toLowerCase() as 'user' | 'assistant' | 'system', content: m.content.slice(0, 4000) })),
       ];
+
+      // GOR-123: Add current message with vision support
+      const userMsgContent: string | Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } }> = (fileContext && fileContext.startsWith('{"type":"image_url"') && (msg as Record<string, unknown>)._isVisionImage)
+        ? [{ type: 'text', text: textContent || 'Please analyze this image.' }, JSON.parse(fileContext)]
+        : userMessage;
+      chatMessages.push({ role: 'user', content: userMsgContent });
 
       // Tool-calling loop (up to 10 rounds for multi-step tasks)
       const MAX_TOOL_ROUNDS = 10;
