@@ -271,6 +271,15 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case 'lark_bitable_create':
         result = await larkBitableCreate(args.appToken as string, args.tableId as string, args.fields as Record<string, unknown>);
         break;
+      case 'lark_bitable_batch_create':
+        result = await larkBitableBatchCreate(args.appToken as string, args.tableId as string, args.records as Array<{ fields: Record<string, unknown> }>);
+        break;
+      case 'lark_bitable_batch_update':
+        result = await larkBitableBatchUpdate(args.appToken as string, args.tableId as string, args.records as Array<{ record_id: string; fields: Record<string, unknown> }>);
+        break;
+      case 'lark_bitable_batch_delete':
+        result = await larkBitableBatchDelete(args.appToken as string, args.tableId as string, args.recordIds as string[]);
+        break;
       case 'lark_search_user':
         result = await larkSearchUser(args.query as string, args.excludeExternal as boolean | undefined, context?.appId);
         break;
@@ -841,6 +850,31 @@ async function larkBitableCreate(appToken: string, tableId: string, fields: Reco
     const { larkBitableCreateRecord } = await import('@/lib/lark-api');
     const data = await larkBitableCreateRecord(appToken, tableId, fields) as { record?: { record_id: string } };
     return `Record created: ${data.record?.record_id || JSON.stringify(data)}`;
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+// GOR-127: Bitable bulk operations
+async function larkBitableBatchCreate(appToken: string, tableId: string, records: Array<{ fields: Record<string, unknown> }>): Promise<string> {
+  try {
+    const { larkBitableBatchCreate } = await import('@/lib/lark-api');
+    const data = await larkBitableBatchCreate(appToken, tableId, records) as { records?: Array<{ record_id: string }> };
+    return `✅ Batch created ${data.records?.length || 0} records.`;
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+async function larkBitableBatchUpdate(appToken: string, tableId: string, records: Array<{ record_id: string; fields: Record<string, unknown> }>): Promise<string> {
+  try {
+    const { larkBitableBatchUpdate } = await import('@/lib/lark-api');
+    const data = await larkBitableBatchUpdate(appToken, tableId, records) as { records?: Array<{ record_id: string }> };
+    return `✅ Batch updated ${data.records?.length || 0} records.`;
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+async function larkBitableBatchDelete(appToken: string, tableId: string, recordIds: string[]): Promise<string> {
+  try {
+    const { larkBitableBatchDelete } = await import('@/lib/lark-api');
+    await larkBitableBatchDelete(appToken, tableId, recordIds);
+    return `✅ Batch deleted ${recordIds.length} records.`;
   } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
 }
 

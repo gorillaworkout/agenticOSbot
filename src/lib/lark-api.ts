@@ -132,6 +132,28 @@ export async function larkBitableDeleteRecord(appToken: string, tableId: string,
   });
 }
 
+// GOR-127: Bitable bulk operations
+export async function larkBitableBatchCreate(appToken: string, tableId: string, records: Array<{ fields: Record<string, unknown> }>): Promise<unknown> {
+  return larkFetch(`/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_create`, {
+    method: 'POST',
+    body: JSON.stringify({ records }),
+  });
+}
+
+export async function larkBitableBatchUpdate(appToken: string, tableId: string, records: Array<{ record_id: string; fields: Record<string, unknown> }>): Promise<unknown> {
+  return larkFetch(`/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_update`, {
+    method: 'POST',
+    body: JSON.stringify({ records }),
+  });
+}
+
+export async function larkBitableBatchDelete(appToken: string, tableId: string, recordIds: string[]): Promise<unknown> {
+  return larkFetch(`/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_delete`, {
+    method: 'POST',
+    body: JSON.stringify({ records: recordIds }),
+  });
+}
+
 // Calendar APIs
 export async function larkCalendarListCalendars(): Promise<unknown> {
   return larkFetch('/calendar/v4/calendars?page_size=50');
