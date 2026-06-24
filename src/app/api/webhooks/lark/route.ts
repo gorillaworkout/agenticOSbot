@@ -104,6 +104,9 @@ export async function POST(request: Request) {
       const chatId = message.chat_id as string;
       const messageType = message.message_type as string;
       const messageId = message.message_id as string;
+      const chatType = message.chat_type as string; // 'p2p' or 'group'
+      const rootId = message.root_id as string || ''; // GOR-124: thread root
+      const parentId = message.parent_id as string || ''; // GOR-124: thread parent
       const senderId = ((msg.sender as Record<string, unknown>)?.sender_id as Record<string, unknown>)?.open_id as string;
 
       if (!chatId) return ok({ received: true });
@@ -268,7 +271,7 @@ export async function POST(request: Request) {
         try {
           const smartResult = await detectSmartContext(textContent, app_id, chatId);
           if (smartResult) {
-            await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(defaultCard(smartResult)), 'chat_id');
+            await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(defaultCard(smartResult)), 'chat_id', rootId || parentId || undefined);
             await query(
               "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
               [conv.id, smartResult, JSON.stringify({ source: 'lark', smartContext: true })]
@@ -281,7 +284,7 @@ export async function POST(request: Request) {
           // Contextual search fallback — search KB/web for questions
           const contextResult = await detectContextualSearch(textContent, app_id, chatId);
           if (contextResult) {
-            await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(defaultCard(contextResult)), 'chat_id');
+            await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(defaultCard(contextResult)), 'chat_id', rootId || parentId || undefined);
             await query(
               "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
               [conv.id, contextResult, JSON.stringify({ source: 'lark', contextualSearch: true })]
@@ -406,7 +409,7 @@ CRITICAL RULES:
             `⚠️ Confirm: **${toolCall.name}**\n\n\`\`\`\n${argsPreview}\n\`\`\``,
             { confirmLabel: '✅ Execute', cancelLabel: '❌ Cancel', destructive: true, pendingId, chatId }
           );
-          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(confirmCard), 'chat_id');
+          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(confirmCard), 'chat_id', rootId || parentId || undefined);
           finalResponse = `⏳ Waiting for confirmation of \`${toolCall.name}\`. The action will execute once you approve.`;
           break;
         }
@@ -454,12 +457,14 @@ CRITICAL RULES:
 
       // Send reply via Lark (auto-detect card type based on tools used)
       const sendCard = autoDetectCard(replyText, toolsUsed);
-      const sendResult = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(sendCard), 'chat_id');
+      // GOR-124: Reply in-thread if message is part of a thread
+      const replyTo = rootId || parentId || undefined;
+      const sendResult = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(sendCard), 'chat_id', replyTo);
       } catch (msgErr) {
         log.error({ err: msgErr, chatId, senderId }, 'Lark message processing failed');
         // Try to send error message back to user so they know something went wrong
         try {
-          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(errorCard('Processing failed', 'Sorry, I encountered an error. Please try again.')), 'chat_id');
+          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(errorCard('Processing failed', 'Sorry, I encountered an error. Please try again.')), 'chat_id', rootId || parentId || undefined);
         } catch (sendErr) {
           log.error({ err: sendErr }, 'Failed to send error message back to Lark');
         }

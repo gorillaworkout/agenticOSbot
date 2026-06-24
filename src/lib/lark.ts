@@ -38,21 +38,24 @@ export async function sendLarkMessage(
   receiveId: string,
   msgType: 'text' | 'interactive',
   content: string,
-  receiveIdType: 'open_id' | 'user_id' | 'chat_id' = 'open_id'
+  receiveIdType: 'open_id' | 'user_id' | 'chat_id' = 'open_id',
+  replyToMessageId?: string // GOR-124: thread reply support
 ): Promise<{ ok: boolean; message_id?: string; error?: string }> {
   try {
     const token = await getTenantAccessToken(appId, appSecret);
-    const res = await fetch(`${LARK_BASE}/im/v1/messages?receive_id_type=${receiveIdType}`, {
+    const url = replyToMessageId
+      ? `${LARK_BASE}/im/v1/messages/${replyToMessageId}/reply`
+      : `${LARK_BASE}/im/v1/messages?receive_id_type=${receiveIdType}`;
+    const body: Record<string, unknown> = replyToMessageId
+      ? { msg_type: msgType, content }
+      : { receive_id: receiveId, msg_type: msgType, content };
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        receive_id: receiveId,
-        msg_type: msgType,
-        content,
-      }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.code !== 0) return { ok: false, error: data.msg };
