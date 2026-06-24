@@ -330,6 +330,10 @@ export async function POST(request: Request) {
       );
 
       // Build chat context and get LLM response with tool-calling
+      // GOR-121: Typing indicator — send loading card immediately, update in-place when done
+      const loadingMsg = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(loadingCard('Thinking... 💭')), 'chat_id', rootId || parentId || undefined);
+      const loadingMessageId = loadingMsg.message_id;
+
       const history = await getMany<{ role: string; content: string }>(
         "SELECT role, content FROM messages WHERE conversation_id = $1 AND content != '' ORDER BY created_at DESC LIMIT 10",
         [conv.id]
@@ -482,9 +486,16 @@ CRITICAL RULES:
 
       // Send reply via Lark (auto-detect card type based on tools used)
       const sendCard = autoDetectCard(replyText, toolsUsed);
-      // GOR-124: Reply in-thread if message is part of a thread
-      const replyTo = rootId || parentId || undefined;
-      const sendResult = await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(sendCard), 'chat_id', replyTo);
+      // GOR-121: Update loading card in-place instead of sending new message
+      if (loadingMessageId) {
+        const updateResult = await updateLarkMessage(app_id, config.app_secret, loadingMessageId, JSON.stringify(sendCard));
+        if (!updateResult.ok) {
+          log.warn({ error: updateResult.error }, 'Update failed, sending new message');
+          await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(sendCard), 'chat_id', rootId || parentId || undefined);
+        }
+      } else {
+        await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(sendCard), 'chat_id', rootId || parentId || undefined);
+      }
       } catch (msgErr) {
         log.error({ err: msgErr, chatId, senderId }, 'Lark message processing failed');
         // Try to send error message back to user so they know something went wrong
