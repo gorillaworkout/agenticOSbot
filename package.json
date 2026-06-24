@@ -14,6 +14,7 @@
     "@types/pg": "^8.20.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "bcryptjs": "^3.0.3",
+    "bottleneck": "^2.19.5",
     "cors": "^2.8.6",
     "cron-parser": "^5.6.0",
     "csv-parse": "^7.0.0",
