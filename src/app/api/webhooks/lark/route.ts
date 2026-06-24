@@ -262,6 +262,13 @@ export async function POST(request: Request) {
 
       log.info({ chatId, senderId, text: textContent.slice(0, 100) }, 'Lark message received');
 
+      // GOR-120: Slash commands — intercept before LLM for fast execution
+      const slashResult = await handleSlashCommand(textContent, app_id, config, chatId, senderId, rootId || parentId);
+      if (slashResult) {
+        await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(slashResult), 'chat_id', rootId || parentId || undefined);
+        return ok({ received: true, slashCommand: true });
+      }
+
       // GOR-119: Group chats — per-user conversation context
       // For groups, use senderId as conversation key so each user has own context
       // For p2p, use chatId as before
@@ -494,6 +501,104 @@ CRITICAL RULES:
     log.error({ err: e }, 'Lark webhook error');
     return err('Webhook processing failed', 500);
   }
+}
+
+/**
+ * GOR-120: Slash commands — fast-path handlers that bypass LLM.
+ * Returns LarkCard if command matched, null otherwise.
+ */
+async function handleSlashCommand(
+  text: string,
+  appId: string,
+  config: { user_id: string; app_secret: string },
+  chatId: string,
+  senderId: string,
+  replyTo?: string
+): Promise<LarkCard | null> {
+  const cmd = text.trim().toLowerCase();
+
+  if (cmd === '/help') {
+    return {
+      config: { enable_forward: true },
+      header: { title: { tag: 'plain_text', content: '📚 Commands' }, template: 'indigo' },
+      elements: [{
+        tag: 'markdown',
+        content: [
+          '**Slash Commands:**',
+          '• `/help` — Show this help',
+          '• `/jadwal` — Today\'s schedule',
+          '• `/task` — Your pending tasks',
+          '• `/approval` — Pending approvals',
+          '• `/memory` — Memory stats',
+          '• `/digest` — Run memory digest',
+          '',
+          '**Natural Language:**',
+          'Just type normally! Examples:',
+          '• "Buat meeting jam 2"',
+          '• "Cari Gusti"',
+          '• "Apa jadwalku besok?"',
+          '• "Ingat: rumah di Jl. Merdeka"',
+        ].join('\n'),
+      }],
+    };
+  }
+
+  if (cmd === '/jadwal') {
+    try {
+      const result = await executeTool('lark_calendar_events', {}, { appId, chatId });
+      const events = parseCalendarEvents(result.output);
+      if (events.length > 0) return calendarCard(events);
+      return infoCard('📅 Today\'s Schedule', 'No events found for today.');
+    } catch {
+      return errorCard('Schedule Error', 'Could not fetch calendar.');
+    }
+  }
+
+  if (cmd === '/task') {
+    try {
+      const result = await executeTool('lark_task_list', {}, { appId, chatId });
+      const tasks = parseTasks(result.output);
+      if (tasks.length > 0) return taskListCard(tasks, { title: 'Your Tasks' });
+      return infoCard('✅ Tasks', 'No pending tasks. Nice!');
+    } catch {
+      return errorCard('Task Error', 'Could not fetch tasks.');
+    }
+  }
+
+  if (cmd === '/approval') {
+    try {
+      const result = await executeTool('lark_approval_list', {}, { appId, chatId });
+      if (result.output.includes('No pending')) return infoCard('⏳ Approvals', 'No pending approvals.');
+      return defaultCard(result.output);
+    } catch {
+      return errorCard('Approval Error', 'Could not fetch approvals.');
+    }
+  }
+
+  if (cmd === '/memory') {
+    try {
+      const { getGraphStats } = await import('@/lib/learning');
+      const stats = await getGraphStats(config.user_id);
+      const notes = (stats as Record<string, unknown>).totalNotes || 0;
+      const entities = (stats as Record<string, unknown>).totalEntities || 0;
+      const links = (stats as Record<string, unknown>).totalLinks || 0;
+      return infoCard('🧠 Memory', `📝 Notes: ${notes}\n🏷️ Entities: ${entities}\n🔗 Links: ${links}`);
+    } catch {
+      return errorCard('Memory Error', 'Could not fetch memory stats.');
+    }
+  }
+
+  if (cmd === '/digest') {
+    try {
+      const { runDailyMemoryDigest } = await import('@/lib/proactive');
+      await runDailyMemoryDigest(config.user_id, appId, chatId);
+      return infoCard('🧠 Digest Sent', 'Check the digest card above.');
+    } catch {
+      return errorCard('Digest Error', 'Could not run memory digest.');
+    }
+  }
+
+  return null; // not a slash command
 }
 
 function parseToolCallsFromResponse(content: string): { name: string; args: Record<string, unknown> }[] {
