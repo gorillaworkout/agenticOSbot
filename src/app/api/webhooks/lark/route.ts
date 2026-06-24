@@ -1,7 +1,7 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { ok, err, parseBody } from '@/lib/api';
 import { parseLarkEvent, sendLarkMessage, updateLarkMessage, downloadLarkFile, addLarkReaction } from '@/lib/lark';
-import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, searchResultCard, confirmationCard, type LarkCard } from '@/lib/lark-cards';
+import { defaultCard, errorCard, successCard, infoCard, loadingCard, actionValue, button, md, divider, buildCard, header, actionBlock, note, calendarCard, taskListCard, searchResultCard, confirmationCard, onboardingCard, quickReplyCard, botMenuCard, type LarkCard } from '@/lib/lark-cards';
 import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } from '@/lib/proactive';
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
@@ -289,6 +289,21 @@ export async function POST(request: Request) {
         );
       }
       if (!conv) return ok({ received: true });
+
+      // GOR-126: Onboarding — show welcome card for first-time users
+      const msgCount = await getOne<{ cnt: string }>(
+        'SELECT COUNT(*)::text as cnt FROM messages WHERE conversation_id = $1',
+        [conv.id]
+      );
+      if (parseInt(msgCount?.cnt || '0') <= 1 && textContent !== '/help') {
+        const userName = senderId.slice(0, 8); // Use sender ID as fallback name
+        await sendLarkMessage(app_id, config.app_secret, chatId, 'interactive', JSON.stringify(onboardingCard(userName)), 'chat_id');
+        await query(
+          "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
+          [conv.id, 'Onboarding card sent', JSON.stringify({ source: 'lark', onboarding: true })]
+        );
+        return ok({ received: true, onboarding: true });
+      }
 
       // === SMART CONTEXT (GOR-97): Auto-detect links, names, quick-tasks ===
       if (!fileContext) {
@@ -578,6 +593,8 @@ async function handleSlashCommand(
           '• `/approval` — Pending approvals',
           '• `/memory` — Memory stats',
           '• `/digest` — Run memory digest',
+          '• `/menu` — Bot capabilities & features',
+          '• `/start` — Re-show onboarding',
           '',
           '**Natural Language:**',
           'Just type normally! Examples:',
@@ -643,6 +660,16 @@ async function handleSlashCommand(
     } catch {
       return errorCard('Digest Error', 'Could not run memory digest.');
     }
+  }
+
+  // GOR-126: Bot menu — show capabilities
+  if (cmd === '/menu' || cmd === '/bot') {
+    return botMenuCard();
+  }
+
+  // GOR-126: Re-show onboarding
+  if (cmd === '/start' || cmd === '/onboarding') {
+    return onboardingCard(senderId.slice(0, 8));
   }
 
   return null; // not a slash command

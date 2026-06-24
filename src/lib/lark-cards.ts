@@ -559,3 +559,74 @@ export function integrationNotConnectedCard(
     ],
   };
 }
+
+/** GOR-126: Onboarding card for new users */
+export function onboardingCard(userName: string): LarkCard {
+  return {
+    config: { enable_forward: true },
+    header: {
+      title: { tag: 'plain_text', content: `👋 Welcome, ${userName}!` },
+      template: 'blue' as CardColor,
+    },
+    elements: [
+      md(`I'm your **AI assistant** connected to Lark. I can help you with:`),
+      divider(),
+      md(`📅 **Calendar** — Check schedule, create events, find free slots`),
+      md(`✅ **Tasks** — List tasks, create todos, mark complete`),
+      md(`⏳ **Approvals** — View pending approvals, approve/reject`),
+      md(`📊 **Bitable** — Read and write spreadsheet data`),
+      md(`🔍 **Search** — Search the web, knowledge base, or documents`),
+      divider(),
+      md(`**Quick commands:**`),
+      md(`/help — Show all commands | /jadwal — Today's schedule | /task — My tasks`),
+      divider(),
+      md(`💡 **Tips:** Just message me in natural language! Try _"What's on my calendar today?"_ or _"Create a task to review report"_`),
+      actionBlock([
+        button('📅 My Schedule', actionValue('slash_command', { command: '/jadwal' }), { type: 'primary' }),
+        button('✅ My Tasks', actionValue('slash_command', { command: '/task' }), { type: 'default' }),
+        button('❓ Help', actionValue('slash_command', { command: '/help' }), { type: 'default' }),
+      ]),
+    ],
+  };
+}
+
+/** GOR-126: Quick reply buttons card */
+export function quickReplyCard(text: string, suggestions: Array<{ label: string; value: string }>): LarkCard {
+  return {
+    config: { enable_forward: true },
+    elements: [
+      md(text),
+      actionBlock(
+        suggestions.map(s => button(s.label, actionValue('quick_reply', { value: s.value }), { type: 'default' })),
+      ),
+    ],
+  };
+}
+
+/** GOR-126: Bot capabilities / help menu card */
+export function botMenuCard(): LarkCard {
+  return {
+    config: { enable_forward: true },
+    header: {
+      title: { tag: 'plain_text', content: '🤖 What I Can Do' },
+      template: 'indigo' as CardColor,
+    },
+    elements: [
+      md(`**Slash Commands** (type these directly):`),
+      md(`/help — This menu | /jadwal — Calendar | /task — Tasks | /approval — Approvals | /memory — Memory stats | /digest — Daily digest`),
+      divider(),
+      md(`**Natural Language** (just ask):`),
+      md(`📅 _"What meetings do I have today?"_ | _"Create an event tomorrow at 3pm"_`),
+      md(`✅ _"Show my tasks"_ | _"Create task: review Q2 report"_`),
+      md(`⏳ _"Any pending approvals?"_ | _"Approve request #123"_`),
+      md(`📊 _"Read data from Bitable"_ | _"Add 5 rows to table"_`),
+      md(`🔍 _"Search for latest pricing"_ | _"What is RAG?"_`),
+      md(`📎 Upload files: Send a PDF/CSV/image and I'll analyze it`),
+      divider(),
+      md(`**Advanced:**`),
+      md(`🧠 I remember our conversations and learn your preferences`),
+      md(`🔄 I can update Lark cards in-place when processing long tasks`),
+      md(`🛡️ I'll ask for confirmation before destructive actions`),
+    ],
+  };
+}
