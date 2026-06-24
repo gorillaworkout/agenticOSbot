@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import AppSidebar from '@/components/AppSidebar';
 
 interface Bot {
   app_id: string;
@@ -164,8 +165,10 @@ export default function BotsPage() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-      <div className="max-w-3xl mx-auto px-4 py-8">
+    <div className="min-h-screen flex" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+      <AppSidebar activePage="bots" />
+      <main className="flex-1 overflow-y-auto px-6 py-8">
+        <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold">🤖 Bot Manager</h1>
@@ -351,6 +354,7 @@ export default function BotsPage() {
           ))}
         </div>
       </div>
+      </main>
     </div>
   );
 }

@@ -45,3 +45,13 @@ next-env.d.ts
 # temp files
 .tmp-pdfs/
 *.pdf.tmp
+
+# Graphify
+.venv-graphify/
+graphify-out/
+
+# Vault (user data)
+vault/
+
+# Next.js
+.next/

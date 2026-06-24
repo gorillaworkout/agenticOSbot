@@ -91,6 +91,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       'get_notes': 'note_list',
       'search_kb': 'kb_search',
       'add_kb': 'kb_add',
+      'search_graphify': 'graphify_search',
+      'query_graphify': 'graphify_query',
+      'search_codebase': 'graphify_search',
+      'query_codebase': 'graphify_query',
       'get_memory': 'memory_get',
       'read_memory': 'memory_get',
       'set_memory': 'memory_set',
@@ -200,6 +204,21 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
         break;
       case 'task_create':
         result = await taskCreate(args.name as string, args.description as string | undefined, args.taskType as string, args.schedule as string, args.payload as Record<string, unknown> | undefined);
+        break;
+      case 'learn_create':
+        result = await learnCreate('system', args.title as string, args.content as string, (args.tags as string[]) || []);
+        break;
+      case 'learn_search':
+        result = await learnSearch('system', args.query as string);
+        break;
+      case 'learn_list':
+        result = await learnList('system', (args.limit as number) || 20);
+        break;
+      case 'graphify_search':
+        result = await graphifySearch(args.query as string);
+        break;
+      case 'graphify_query':
+        result = await graphifyQuery(args.question as string);
         break;
       case 'task_list':
         result = await taskList(args.limit as number | undefined);
@@ -562,13 +581,14 @@ async function memorySet(namespace: string | undefined, key: string, value: unkn
 }
 
 async function kbSearch(searchQuery: string, tag?: string): Promise<string> {
-  let sql = "SELECT title, content, tags FROM knowledge_base WHERE (title ILIKE $1 OR content ILIKE $1)";
+  // Search knowledge_notes (the single source of truth)
+  let sql = 'SELECT title, content, tags FROM knowledge_notes WHERE (title ILIKE $1 OR content ILIKE $1)';
   const params: unknown[] = [`%${searchQuery}%`];
   if (tag) {
-    sql += " AND $2 = ANY(tags)";
+    sql += ' AND $2 = ANY(tags)';
     params.push(tag);
   }
-  sql += " ORDER BY updated_at DESC LIMIT 5";
+  sql += ' ORDER BY updated_at DESC LIMIT 10';
   const rows = await getMany<{ title: string; content: string; tags: string[] }>(sql, params);
   if (rows.length === 0) return `No knowledge base entries found for "${searchQuery}"`;
   return rows.map(r => `📚 ${r.title}: ${r.content.slice(0, 200)}${r.content.length > 200 ? '...' : ''} [${r.tags?.join(', ') || ''}]`).join('\n');
@@ -577,13 +597,55 @@ async function kbSearch(searchQuery: string, tag?: string): Promise<string> {
 async function kbAdd(title: string, content: string, tags?: string[], sourceType?: string): Promise<string> {
   const id = crypto.randomUUID();
   await query(
-    "INSERT INTO knowledge_base (id, user_id, source_type, title, content, tags) VALUES ($1, 'system', $2, $3, $4, $5)",
+    "INSERT INTO knowledge_notes (id, user_id, source_type, title, content, tags) VALUES ($1, 'system', $2, $3, $4, $5)",
     [id, sourceType || 'document', title, content, tags || []]
   );
   return `Knowledge base entry created: "${title}" (id: ${id})`;
 }
 
 // === Scheduled Task Tools ===
+
+async function learnCreate(userId: string, title: string, content: string, tags: string[]): Promise<string> {
+  try {
+    const { createNote } = await import('@/lib/learning');
+    const note = await createNote(userId, title, content, tags, 'bot');
+    return `✅ Note saved: "${note.title}" (id: ${note.id})`;
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+async function learnSearch(userId: string, query: string): Promise<string> {
+  try {
+    const { searchNotes } = await import('@/lib/learning');
+    const notes = await searchNotes(userId, query);
+    if (notes.length === 0) return `No notes found for "${query}".`;
+    return notes.map((n: Record<string, unknown>, i: number) => `${i+1}. [${n.title}] ${(n.content as string).slice(0,100)}...`).join('\n');
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+async function learnList(userId: string, limit: number): Promise<string> {
+  try {
+    const { listNotes } = await import('@/lib/learning');
+    const notes = await listNotes(userId, limit);
+    if (notes.length === 0) return 'No notes yet.';
+    return notes.map((n: Record<string, unknown>, i: number) => `${i+1}. ${n.title} [${(n.tags as string[])?.join(', ') || ''}]`).join('\n');
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+async function graphifySearch(query: string): Promise<string> {
+  try {
+    const { searchNodes } = await import('@/lib/graphify');
+    const nodes = searchNodes(query, 10);
+    if (nodes.length === 0) return `No nodes found matching "${query}" in the codebase graph.`;
+    return nodes.map((n: any) => `🔍 ${n.label} (community ${n.community}) — ${n.source_file || 'unknown'}`).join('\n');
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
+
+async function graphifyQuery(question: string): Promise<string> {
+  try {
+    const { queryGraph } = await import('@/lib/graphify');
+    return queryGraph(question);
+  } catch (e) { return `Error: ${e instanceof Error ? e.message : 'unknown'}`; }
+}
 
 async function taskCreate(name: string, description: string | undefined, taskType: string, schedule: string, payload?: Record<string, unknown>): Promise<string> {
   const nextRun = taskType === 'interval' ? new Date(Date.now() + parseInt(schedule, 10)) : new Date(Date.now() + 60_000);

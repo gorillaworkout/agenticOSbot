@@ -1,6 +1,7 @@
 import { getOne, getMany, query } from '@/lib/db';
 import { authenticateRequest, requireAuth } from '@/lib/auth';
 import { ok, err, paginated, parseBody, parseSearchParams } from '@/lib/api';
+import { createVaultNote } from '@/lib/vault';
 import { z } from 'zod';
 
 const CreateKBSchema = z.object({
@@ -43,12 +44,12 @@ export async function GET(request: Request) {
   }
 
   const countRow = await getOne<{ count: number }>(
-    `SELECT COUNT(*)::int as count FROM knowledge_base ${where}`, params
+    `SELECT COUNT(*)::int as count FROM knowledge_notes ${where}`, params
   );
   const total = countRow?.count || 0;
 
   const items = await getMany(
-    `SELECT * FROM knowledge_base ${where} ORDER BY updated_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+    `SELECT * FROM knowledge_notes ${where} ORDER BY updated_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
     [...params, pageSize, offset]
   );
 
@@ -63,12 +64,13 @@ export async function POST(request: Request) {
   const parsed = CreateKBSchema.safeParse(body);
   if (!parsed.success) return err(parsed.error.issues[0].message, 400);
 
-  const item = await getOne(
-    `INSERT INTO knowledge_base (user_id, source_type, source_id, title, content, tags, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [user!.id, parsed.data.sourceType, parsed.data.sourceId || null,
-     parsed.data.title, parsed.data.content, parsed.data.tags || [],
-     JSON.stringify(parsed.data.metadata || {})]
+  const item = await createVaultNote(
+    user!.id,
+    parsed.data.title,
+    parsed.data.content,
+    parsed.data.tags || [],
+    parsed.data.sourceType,
+    parsed.data.metadata || {}
   );
 
   return ok(item, 201);

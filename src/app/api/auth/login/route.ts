@@ -4,7 +4,7 @@ import { ok, err, parseBody } from '@/lib/api';
 import { z } from 'zod';
 
 const LoginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1),
   password: z.string().min(1),
 });
 

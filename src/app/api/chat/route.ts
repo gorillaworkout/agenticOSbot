@@ -4,6 +4,7 @@ import { getOne, getMany, query } from '@/lib/db';
 import { err, parseBody } from '@/lib/api';
 import { getToolDefinitions, executeTool } from '@/lib/tools';
 import { checkScheduledTasks } from '@/lib/scheduler';
+import { autoLearn } from '@/lib/learning';
 import { z } from 'zod';
 
 const ChatSchema = z.object({
@@ -22,6 +23,18 @@ export async function POST(request: Request) {
 
   // Fire-and-forget scheduler check (non-blocking)
   checkScheduledTasks().catch(() => {});
+
+  // Fire-and-forget auto-learn from conversation
+  const autoLearnFromChat = async (convId: string, userMsg: string, assistantMsg: string, userId: string) => {
+    try {
+      const result = await autoLearn(userId, convId, userMsg, assistantMsg);
+      if (result.notesCreated > 0 || result.entitiesCreated > 0) {
+        console.log(`[autoLearn] notes=${result.notesCreated}, entities=${result.entitiesCreated}`);
+      }
+    } catch (e) {
+      console.error('[autoLearn] failed:', e);
+    }
+  };
 
   try {
     const body = await parseBody<z.infer<typeof ChatSchema>>(request);
@@ -159,6 +172,8 @@ CRITICAL RULES:
             );
           }
           await query('UPDATE conversations SET updated_at=now() WHERE id=$1', [conversationId]);
+          // Auto-learn from conversation (fire-and-forget)
+          autoLearnFromChat(conversationId, message, response.content, user!.id);
           return Response.json({ ok: true, data: { message: response.content, model: response.model, usage: response.usage, toolsUsed, rounds: round } });
         }
 
@@ -219,6 +234,8 @@ CRITICAL RULES:
                 );
               }
               await query('UPDATE conversations SET updated_at=now() WHERE id=$1', [conversationId]);
+              // Auto-learn from conversation (fire-and-forget)
+              autoLearnFromChat(conversationId, message, fullContent, user!.id);
               send('done', { toolsUsed, rounds: round });
               controller.close();
               return;

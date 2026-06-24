@@ -5,6 +5,7 @@ import { detectSmartContext, detectContextualSearch, handleApprovalWebhook } fro
 import { childLogger } from '@/lib/logger';
 import { chatCompletion } from '@/lib/llm';
 import { getToolDefinitions, executeTool } from '@/lib/tools';
+import { autoLearn } from '@/lib/learning';
 
 const log = childLogger('webhook:lark');
 
@@ -249,6 +250,8 @@ export async function POST(request: Request) {
               "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
               [conv.id, smartResult, JSON.stringify({ source: 'lark', smartContext: true })]
             );
+            // Auto-learn from smart context exchange (fire-and-forget)
+            autoLearn(config.user_id, conv.id, textContent, smartResult).catch(e => log.error({ err: e }, 'autoLearn failed'));
             return ok({ received: true, smartContext: true });
           }
 
@@ -260,6 +263,8 @@ export async function POST(request: Request) {
               "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
               [conv.id, contextResult, JSON.stringify({ source: 'lark', contextualSearch: true })]
             );
+            // Auto-learn from contextual search exchange (fire-and-forget)
+            autoLearn(config.user_id, conv.id, textContent, contextResult).catch(e => log.error({ err: e }, 'autoLearn failed'));
             return ok({ received: true, contextualSearch: true });
           }
         } catch (scErr) {
@@ -323,6 +328,7 @@ CRITICAL RULES:
 - For Video Conferences: use lark_vc_search to find meetings, lark_vc_notes for meeting notes.
 - For Group Management: use lark_group_list, lark_group_create, lark_group_members.
 - For Lark Base (Bitable): use lark_bitable_tables to list tables, lark_bitable_list to read records. When sharing a Base link, auto-discover tables and offer to read data. When user asks about data ("total amount paid", "count rows", etc.), use lark_bitable_list to fetch records then calculate.
+- For Learning: use learn_create to save notes, learn_search to find info, learn_list to browse. When user says "ingat ini", "catat", "remember", "save this" — ALWAYS create a note. Auto-learn important facts from conversations.
 - NEVER say "create it manually" or "do it yourself". USE YOUR TOOLS.
 - For proactive: morning briefing runs automatically at 8am WIB. Meeting reminders push 15min before. Smart context auto-detects doc links, person searches, and quick tasks.`;
 
@@ -399,6 +405,9 @@ CRITICAL RULES:
         "INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1, 'ASSISTANT', $2, $3)",
         [conv.id, replyText, JSON.stringify({ source: 'lark', toolsUsed })]
       );
+
+      // Auto-learn from conversation (fire-and-forget)
+      autoLearn(config.user_id, conv.id, textContent, replyText).catch(e => log.error({ err: e }, 'autoLearn failed'));
 
       // Send reply via Lark
       await sendLarkMessage(app_id, config.app_secret, chatId, 'text', JSON.stringify({ text: replyText }), 'chat_id');

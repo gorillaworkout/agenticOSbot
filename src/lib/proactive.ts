@@ -326,8 +326,18 @@ export async function detectContextualSearch(message: string, appId: string, cha
 
       // Search knowledge base first
       const kbResult = await executeTool('kb_search', { query }, { appId, chatId });
-      if (kbResult.success && !kbResult.output.includes('No results')) {
-        return `🔍 **Knowledge Base**\n\n${kbResult.output}`;
+      if (kbResult.success && !kbResult.output.includes('No knowledge base entries found')) {
+        // Use LLM to format a natural response from KB data
+        try {
+          const formatted = await chatCompletion([
+            { role: 'system', content: 'You are a helpful assistant. Given knowledge base search results, provide a natural, conversational answer to the user\'s question. Do NOT show raw data — synthesize it into a clear response. If the data doesn\'t fully answer the question, say what you know and note any gaps. Respond in the same language as the user.' },
+            { role: 'user', content: `User asked: "${message}"\n\nKnowledge base results:\n${kbResult.output}\n\nProvide a natural response based on this data.` }
+          ], { temperature: 0.3, maxTokens: 500 });
+          return formatted.content;
+        } catch {
+          // Fallback to raw output if LLM fails
+          return `🔍 **Knowledge Base**\n\n${kbResult.output}`;
+        }
       }
 
       // Search web if no KB results
