@@ -496,18 +496,30 @@ async function webFetch(url: string, maxChars = 10000): Promise<string> {
     const contentType = res.headers.get('content-type') || '';
     const text = await res.text();
 
-    // Strip HTML tags for text extraction
+    // GOR-111: Use Cheerio for HTML parsing — much cleaner than regex
     let content = text;
     if (contentType.includes('html')) {
-      // Remove script/style blocks
-      content = content.replace(/<script[\s\S]*?<\/script>/gi, '');
-      content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
-      // Remove HTML tags
-      content = content.replace(/<[^>]+>/g, ' ');
-      // Decode entities
-      content = content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
-      // Collapse whitespace
-      content = content.replace(/\s+/g, ' ').trim();
+      const { load } = await import('cheerio');
+      const $ = load(text);
+      
+      // Remove noise elements
+      $('script, style, nav, footer, header, aside, iframe, noscript, svg').remove();
+      $('[role="navigation"], [role="banner"], [role="contentinfo"]').remove();
+      $('.ad, .ads, .advertisement, .sidebar, .menu, .cookie-banner, .popup').remove();
+      
+      // Extract main content area or fall back to body
+      const mainContent = $('main, article, [role="main"], .content, .post-content, .entry-content').first();
+      const target = mainContent.length ? mainContent : $('body');
+      
+      // Get text with proper spacing
+      content = target.text()
+        .replace(/\s+/g, ' ')
+        .replace(/\n\s*\n/g, '\n\n')
+        .trim();
+      
+      // Extract title
+      const title = $('title').text().trim();
+      if (title) content = `Title: ${title}\n\n${content}`;
     }
 
     if (content.length > maxChars) {
