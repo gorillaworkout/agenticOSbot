@@ -1,74 +1,147 @@
-import { getMany, query } from './db';
-import { executeTool } from './tools';
+/**
+ * GOR-103: Typed in-process cron scheduling with timezone support.
+ * Uses cron-parser for expression parsing and date-fns-tz for timezone handling.
+ */
+import { CronExpressionParser } from 'cron-parser';
 import { childLogger } from './logger';
 
 const log = childLogger('scheduler');
 
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  cronExpr: string;
+  timezone: string;
+  handler: () => Promise<void>;
+  enabled: boolean;
+  lastRun?: Date;
+  nextRun: Date;
+  running: boolean;
+}
+
+const tasks = new Map<string, ScheduledTask>();
+let timer: ReturnType<typeof setTimeout> | null = null;
+let running = false;
+
 /**
- * Check and execute due scheduled tasks.
- * Called from health endpoint or chat route as a lightweight trigger.
- * Returns number of tasks executed.
+ * Calculate next run time for a cron expression in a given timezone.
  */
-export async function checkScheduledTasks(): Promise<number> {
+export function calculateNextRun(cronExpr: string, timezone: string = 'Asia/Jakarta'): Date {
   try {
-    const dueTasks = await getMany<{
-      id: string;
-      user_id: string;
-      name: string;
-      task_type: string;
-      schedule: string;
-      payload: Record<string, unknown>;
-    }>(
-      `SELECT id, user_id, name, task_type, schedule, payload
-       FROM scheduled_tasks
-       WHERE enabled = true AND next_run_at <= now()
-       LIMIT 5`
-    );
-
-    if (dueTasks.length === 0) return 0;
-
-    let executed = 0;
-    for (const task of dueTasks) {
-      try {
-        log.info({ taskId: task.id, name: task.name, type: task.task_type }, 'Executing scheduled task');
-
-        const payload = task.payload || {};
-
-        // Execute the payload tool if specified
-        if (payload.tool && typeof payload.tool === 'string') {
-          await executeTool(payload.tool, (payload.args as Record<string, unknown>) || {});
-        }
-
-        // Update timestamps
-        const nextRun = computeNextRun(task.task_type, task.schedule);
-        if (task.task_type === 'once') {
-          await query(
-            'UPDATE scheduled_tasks SET last_run_at = now(), next_run_at = NULL, enabled = false, updated_at = now() WHERE id = $1',
-            [task.id]
-          );
-        } else {
-          await query(
-            'UPDATE scheduled_tasks SET last_run_at = now(), next_run_at = $1, updated_at = now() WHERE id = $2',
-            [nextRun, task.id]
-          );
-        }
-        executed++;
-      } catch (e) {
-        log.error({ err: e, taskId: task.id }, 'Scheduled task execution failed');
-        // Still update last_run_at to prevent retry storm
-        await query('UPDATE scheduled_tasks SET last_run_at = now(), updated_at = now() WHERE id = $1', [task.id]);
-      }
-    }
-
-    return executed;
-  } catch (e) {
-    log.error({ err: e }, 'Scheduler check failed');
-    return 0;
+    const interval = CronExpressionParser.parse(cronExpr, {
+      tz: timezone,
+    });
+    return interval.next().toDate();
+  } catch (err) {
+    log.error({ err, cronExpr }, 'Invalid cron expression');
+    // Fallback: 1 hour from now
+    return new Date(Date.now() + 3600000);
   }
 }
 
-function computeNextRun(taskType: string, schedule: string): Date {
-  if (taskType === 'interval') return new Date(Date.now() + parseInt(schedule, 10));
-  if (taskType === 'cron') return new Date(Date.now() + 60_000); // simplified: next minute
-  return new Date(Date.now() + 60_000);
+/**
+ * Register a scheduled task.
+ */
+export function scheduleTask(
+  id: string,
+  name: string,
+  cronExpr: string,
+  handler: () => Promise<void>,
+  timezone: string = 'Asia/Jakarta'
+): ScheduledTask {
+  const nextRun = calculateNextRun(cronExpr, timezone);
+  const task: ScheduledTask = {
+    id,
+    name,
+    cronExpr,
+    timezone,
+    handler,
+    enabled: true,
+    nextRun,
+    running: false,
+  };
+  tasks.set(id, task);
+  log.info({ id, name, cronExpr, timezone, nextRun: nextRun.toISOString() }, 'Task scheduled');
+  
+  if (!running) start();
+  return task;
+}
+
+/**
+ * Unregister a scheduled task.
+ */
+export function unscheduleTask(id: string): boolean {
+  const deleted = tasks.delete(id);
+  if (deleted) log.info({ id }, 'Task unscheduled');
+  return deleted;
+}
+
+/**
+ * Get all registered tasks.
+ */
+export function getScheduledTasks(): ScheduledTask[] {
+  return Array.from(tasks.values());
+}
+
+/**
+ * GOR-103: Check and run due tasks (called from chat route for non-blocking execution).
+ */
+export async function checkScheduledTasks(): Promise<void> {
+  await tick();
+}
+
+/**
+ * Main scheduler loop — checks for due tasks every 15 seconds.
+ */
+async function tick(): Promise<void> {
+  const now = new Date();
+  
+  for (const task of tasks.values()) {
+    if (!task.enabled || task.running) continue;
+    if (task.nextRun > now) continue;
+
+    task.running = true;
+    const startTime = Date.now();
+    
+    try {
+      log.info({ id: task.id, name: task.name }, 'Running scheduled task');
+      await task.handler();
+      task.lastRun = now;
+      const duration = Date.now() - startTime;
+      log.info({ id: task.id, name: task.name, duration }, 'Task completed');
+    } catch (err) {
+      log.error({ err, id: task.id, name: task.name }, 'Task failed');
+    } finally {
+      task.running = false;
+      task.nextRun = calculateNextRun(task.cronExpr, task.timezone);
+    }
+  }
+}
+
+/**
+ * Start the scheduler loop.
+ */
+export function start(): void {
+  if (running) return;
+  running = true;
+  log.info('Scheduler started');
+  
+  const loop = () => {
+    if (!running) return;
+    tick().catch(err => log.error({ err }, 'Scheduler tick error'));
+    timer = setTimeout(loop, 15000); // Check every 15 seconds
+  };
+  loop();
+}
+
+/**
+ * Stop the scheduler loop.
+ */
+export function stop(): void {
+  running = false;
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  log.info('Scheduler stopped');
 }
